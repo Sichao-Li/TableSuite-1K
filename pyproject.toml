@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tablesuite"
+version = "1.2.0"
+description = "TableSuite-1K benchmark for tabular prediction, grounding, and question answering"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Sichao Li"}]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Sichao-Li/TableSuite-1K"
+Repository = "https://github.com/Sichao-Li/TableSuite-1K"
+Issues = "https://github.com/Sichao-Li/TableSuite-1K/issues"
+Dataset = "https://huggingface.co/datasets/Lester1996/TableSuite-1K"
+
+[project.optional-dependencies]
+local = ["pyarrow>=17"]
+hf = ["datasets>=3.0"]
+openml = ["openml>=0.15", "pyarrow>=17"]
+dev = ["datasets>=3.0", "pyarrow>=17", "pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+tablesuite = "tablesuite._cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tablesuite = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

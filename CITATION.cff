@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use TableSuite-1K, please cite this software release."
+title: "TableSuite-1K: A Comprehensive Benchmark for Tabular Prediction, Grounding, and Question Answering"
+type: software
+authors:
+  - family-names: Li
+    given-names: Sichao
+repository-code: "https://github.com/Sichao-Li/TableSuite-1K"
+url: "https://huggingface.co/datasets/Lester1996/TableSuite-1K"
+version: 1.2.0
+date-released: 2026-08-24
+license: MIT
