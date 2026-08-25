@@ -96,7 +96,7 @@ Install the matching companion package:
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.3.0'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.4.0'
 ```
 
 Materialize one explicitly selected source table from OpenML:
@@ -131,6 +131,27 @@ print(task.score(example.id, response))
 
 Questions and answers are produced deterministically from the source slice and
 typed operation when an example is loaded. No LLM authors benchmark gold.
+
+For additional training or stress-test data, the companion package can create
+deterministic plans with the same task semantics:
+
+```python
+from tablesuite import generate_task
+
+generated = generate_task(
+    "Lester1996/TableSuite-1K",
+    "table_question_answering",
+    source="openml-parquet",
+    revision="v1.3.0",
+    split="train",
+    max_datasets=10,
+    items_per_dataset=100,
+    seed=42,
+)
+```
+
+Generated plans are reported separately and never replace the frozen official
+evaluation configurations.
 
 ## Task Interfaces
 

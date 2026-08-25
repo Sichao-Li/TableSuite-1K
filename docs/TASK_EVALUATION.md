@@ -95,3 +95,34 @@ source before upload.
 
 OpenML remains the source-data distributor. Prediction packets and integrated
 reasoning outputs are not included in this release.
+
+## Deterministic Expansion
+
+Use official plans for comparable evaluation. For training or controlled
+stress tests, `generate_task` creates additional value-free plans with the same
+operations, eligibility checks, split policy, renderer, and scorer:
+
+```python
+from tablesuite import generate_task
+
+task = generate_task(
+    "Lester1996/TableSuite-1K",
+    "cell_grounding",
+    source="openml-parquet",
+    revision="v1.3.0",
+    split="train",
+    items_per_dataset=250,
+    max_items=10_000,
+    seed=7,
+)
+```
+
+`items_per_dataset` controls balanced source coverage. `max_items` is an
+optional deterministic global cap, useful for smoke tests. A saved generated
+bundle contains only `generation.json` and `plans.jsonl`; wording and gold are
+still produced from the source at access time.
+
+Each generation manifest records the reference, revision, selected datasets,
+seed, scale, generator version, configuration fingerprint, and plan
+fingerprint. Generated bundles must be reported separately from official
+evaluation plans.

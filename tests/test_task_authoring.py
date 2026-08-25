@@ -9,7 +9,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import get_dataset_config_names, load_dataset
 
-from tablesuite import Benchmark, Catalog, load_task
+from tablesuite import (
+    Benchmark,
+    Catalog,
+    GeneratedTaskDataset,
+    generate_task,
+    load_generated_task,
+    load_task,
+)
 from tablesuite._cli import main as cli_main
 from tablesuite.evaluation import PlanExecutor, audit_plans
 from tablesuite.release import TaskGenerationConfig, build_huggingface_release
@@ -327,6 +334,101 @@ def test_release_cli_builds_and_validates(tmp_path: Path, capsys) -> None:
     validation = json.loads(capsys.readouterr().out)
     assert validation["passed"]
     assert validation["task_plans_executed"] == validation["plans"]
+
+
+def test_generated_task_uses_the_standard_task_interface(tmp_path: Path) -> None:
+    reference, source = _authoring_fixture(tmp_path)
+
+    first = generate_task(
+        reference,
+        "cell_grounding",
+        split="train",
+        source=source,
+        dataset_ids=("openml_101",),
+        items_per_dataset=5,
+        max_items=3,
+        seed=17,
+    )
+    second = generate_task(
+        reference,
+        "cell_grounding",
+        split="train",
+        source=source,
+        dataset_ids=("openml_101",),
+        items_per_dataset=5,
+        max_items=3,
+        seed=17,
+    )
+
+    assert isinstance(first, GeneratedTaskDataset)
+    assert len(first) == 3
+    assert first.ids == second.ids
+    assert first[0].prompt == second[0].prompt
+    assert first.manifest.origin == "generated"
+    assert first.manifest.task == "cell_grounding"
+    assert first.manifest.dataset_ids == ("openml_101",)
+    assert first.manifest.generated_items == 3
+    assert first.manifest.plan_fingerprint == second.manifest.plan_fingerprint
+
+
+def test_generated_task_bundle_round_trips_without_values(tmp_path: Path) -> None:
+    reference, source = _authoring_fixture(tmp_path)
+    generated = generate_task(
+        reference,
+        "table_question_answering",
+        split="train",
+        source=source,
+        dataset_ids=("openml_101",),
+        items_per_dataset=4,
+        seed=9,
+    )
+    output = tmp_path / "generated-task"
+
+    generated.save(output)
+    restored = load_generated_task(output, source=source)
+
+    assert restored.ids == generated.ids
+    assert restored.manifest == generated.manifest
+    assert restored[0].prompt == generated[0].prompt
+    plan_text = (output / "plans.jsonl").read_text(encoding="utf-8")
+    assert '"gold"' not in plan_text
+    assert '"question"' not in plan_text
+    assert "north" not in plan_text
+    assert (output / "generation.json").is_file()
+
+
+def test_generate_cli_writes_a_reusable_bundle(tmp_path: Path, capsys) -> None:
+    reference, source = _authoring_fixture(tmp_path)
+    output = tmp_path / "generated-cli"
+
+    cli_main(
+        [
+            "generate",
+            "--reference",
+            str(reference),
+            "--source",
+            str(source),
+            "--name",
+            "table_question_answering",
+            "--split",
+            "train",
+            "--dataset-id",
+            "openml_101",
+            "--items-per-dataset",
+            "4",
+            "--max-items",
+            "2",
+            "--seed",
+            "11",
+            "--output",
+            str(output),
+        ]
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["generated_items"] == 2
+    assert summary["task"] == "table_question_answering"
+    assert len(load_generated_task(output, source=source)) == 2
 
 
 def _load_all_plans(root: Path) -> tuple:

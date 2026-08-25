@@ -30,7 +30,7 @@ when a source is too narrow for a particular task.
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.3.0'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.4.0'
 ```
 
 ## Runnable Quickstart
@@ -78,6 +78,60 @@ print(report.to_dict())
 Reports include micro accuracy, dataset-macro accuracy,
 dedup-cluster-macro accuracy, parse-failure rate, and accuracy by operation.
 Missing responses fail unless `allow_partial=True` is requested explicitly.
+
+## Generate Additional Tasks
+
+Official evaluation always uses the frozen Hugging Face plans above. Additional
+training or stress-test plans can be generated deterministically from the same
+task recipe:
+
+```python
+from tablesuite import generate_task
+
+generated = generate_task(
+    "Lester1996/TableSuite-1K",
+    "table_question_answering",
+    source="openml-parquet",
+    revision="v1.3.0",
+    split="train",
+    task_families=("classification",),
+    max_datasets=10,
+    items_per_dataset=100,
+    seed=42,
+)
+
+example = generated[0]
+print(example.prompt)
+print(generated.score(example.id, model(example.prompt)))
+generated.save("generated-qa")
+```
+
+`generated-qa` contains a value-free plan file and a reproducibility manifest.
+Reload it without regenerating source choices:
+
+```python
+from tablesuite import load_generated_task
+
+generated = load_generated_task("generated-qa", source="openml-parquet")
+```
+
+The CLI provides the same operation:
+
+```bash
+tablesuite generate \
+  --reference 'Lester1996/TableSuite-1K' \
+  --revision v1.3.0 \
+  --source openml-parquet \
+  --name table_question_answering \
+  --split train \
+  --items-per-dataset 100 \
+  --max-datasets 10 \
+  --seed 42 \
+  --output generated-qa
+```
+
+Generated plans are deterministic but are not part of the official evaluation
+set. Scale is balanced per dataset so large source tables do not dominate.
 
 ## Official Tasks
 
@@ -177,7 +231,10 @@ TableSuite-1K is independent from and not endorsed by OpenML. See
 
 ```text
 load_task
+generate_task
+load_generated_task
 TaskDataset
+GeneratedTaskDataset
 TaskExample
 TaskScore
 TaskReport

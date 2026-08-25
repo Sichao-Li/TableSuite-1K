@@ -5,6 +5,12 @@ from importlib.metadata import version as _distribution_version
 
 from tablesuite.benchmark import Benchmark, BenchmarkSubset
 from tablesuite.catalog import Catalog
+from tablesuite.generation import (
+    GeneratedTaskDataset,
+    GenerationManifest,
+    generate_task,
+    load_generated_task,
+)
 from tablesuite.rendering import (
     render_icl_prediction,
     render_serialized_table_prediction,
@@ -39,7 +45,7 @@ from tablesuite.types import (
 try:
     __version__ = _distribution_version("tablesuite")
 except _PackageNotFoundError:
-    __version__ = "1.3.0"
+    __version__ = "1.4.0"
 
 __all__ = [
     "Benchmark",
@@ -47,6 +53,8 @@ __all__ = [
     "Catalog",
     "CellFact",
     "DatasetSpec",
+    "GeneratedTaskDataset",
+    "GenerationManifest",
     "ICLPredictionExample",
     "ICLPredictionRequest",
     "ICLProtocol",
@@ -65,7 +73,9 @@ __all__ = [
     "TaskExample",
     "TaskReport",
     "TaskScore",
+    "generate_task",
     "load_task",
+    "load_generated_task",
     "materialize_openml_sources",
     "render_icl_prediction",
     "render_serialized_table_prediction",

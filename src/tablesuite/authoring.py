@@ -37,6 +37,7 @@ CELL_SPLITS = (
     "template_test",
 )
 QA_SPLITS = (*CELL_SPLITS, "composition_test")
+TASK_NAMES = ("cell_grounding", "table_question_answering")
 
 
 @dataclass(frozen=True)
@@ -106,10 +107,31 @@ def generate_task_plans(
     catalog: Catalog,
     source: ParquetSource,
     config: TaskGenerationConfig,
+    *,
+    dataset_ids: tuple[str, ...] = (),
+    tasks: tuple[str, ...] = TASK_NAMES,
+    splits: tuple[EvaluationSplit, ...] = (),
 ) -> TaskGenerationReport:
-    """Generate deterministic grounding and QA plans from a reference catalog."""
+    """Generate deterministic grounding and QA plans from a reference catalog.
 
-    selected = catalog.select(Selection(tasks=("grounding",), seed=config.seed))
+    Optional filters let the public runtime generator reuse the same authoring
+    path as the official release without constructing unrelated plans.
+    """
+
+    if unknown := set(tasks) - set(TASK_NAMES):
+        raise ValueError(f"unsupported generation tasks: {sorted(unknown)}")
+    if unknown := set(splits) - set(QA_SPLITS):
+        raise ValueError(f"unsupported generation splits: {sorted(unknown)}")
+    requested_tasks = set(tasks)
+    requested_splits = set(splits)
+
+    selected = catalog.select(
+        Selection(
+            tasks=("grounding",),
+            dataset_ids=dataset_ids,
+            seed=config.seed,
+        )
+    )
     grounding = {
         str(record["dataset_id"]): record for record in selected.grounding_tasks
     }
@@ -124,17 +146,19 @@ def generate_task_plans(
     }
     skipped: dict[str, int] = defaultdict(int)
 
-    for dataset in sorted(catalog.datasets, key=lambda item: item.dataset_id):
-        task = grounding.get(dataset.dataset_id)
-        if task is None:
+    for dataset in sorted(selected.datasets, key=lambda item: item.dataset_id):
+        grounding_contract = grounding.get(dataset.dataset_id)
+        if grounding_contract is None:
             skipped["missing_grounding_contract"] += 1
             continue
         rows = source.rows(dataset)
-        columns = _eligible_columns(dataset, task)
+        columns = _eligible_columns(dataset, grounding_contract)
         if len(columns) < config.min_qa_context_columns:
             skipped["too_few_eligible_columns"] += 1
             continue
         for split, row_ids in _evaluation_pools(dataset, len(rows), config.seed).items():
+            if requested_splits and split not in requested_splits:
+                continue
             cell_limit = _limit_for_split(
                 split,
                 config.cell_items_per_dataset,
@@ -145,7 +169,11 @@ def generate_task_plans(
                 config.qa_items_per_dataset,
                 config.qa_transfer_items_per_dataset,
             )
-            if split in CELL_SPLITS and len(columns) >= config.min_cell_context_columns:
+            if (
+                "cell_grounding" in requested_tasks
+                and split in CELL_SPLITS
+                and len(columns) >= config.min_cell_context_columns
+            ):
                 generated = _cell_plans(
                     catalog.reference_id,
                     dataset,
@@ -162,10 +190,10 @@ def generate_task_plans(
                     dataset_sets["cell_grounding"][split].add(dataset.dataset_id)
                 if len(generated) < cell_limit:
                     skipped[f"cell_shortfall:{split}"] += cell_limit - len(generated)
-            elif split in CELL_SPLITS:
+            elif "cell_grounding" in requested_tasks and split in CELL_SPLITS:
                 skipped[f"cell_too_narrow:{split}"] += 1
 
-            if split in QA_SPLITS:
+            if "table_question_answering" in requested_tasks and split in QA_SPLITS:
                 generated = _qa_plans(
                     catalog.reference_id,
                     dataset,

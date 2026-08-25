@@ -149,6 +149,24 @@ wording.
 `tablesuite.load_task` accepts both the compact v1.3.0 rows and legacy v1.2.1
 nested rows. Users do not need to reconstruct internal plans themselves.
 
+## Locally Generated Bundles
+
+`tablesuite generate` writes a deliberately separate two-file bundle:
+
+```text
+generated-task/
+  generation.json
+  plans.jsonl
+```
+
+`generation.json` records the benchmark reference, selected datasets, task,
+split, seed, scale, versions, eligibility shortfalls, and deterministic
+fingerprints. `plans.jsonl` stores value-free semantic plans. It never stores
+rendered questions, source values, gold answers, model responses, or metrics.
+
+Generated bundles are loaded with `load_generated_task` and must not be mixed
+with the frozen Hugging Face evaluation configurations.
+
 ## Source Resolution
 
 Local source files use:

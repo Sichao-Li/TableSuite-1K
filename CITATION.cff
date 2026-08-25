@@ -7,6 +7,6 @@ authors:
     given-names: Sichao
 repository-code: "https://github.com/Sichao-Li/TableSuite-1K"
 url: "https://huggingface.co/datasets/Lester1996/TableSuite-1K"
-version: 1.3.0
-date-released: 2026-08-25
+version: 1.4.0
+date-released: 2026-08-26
 license: MIT

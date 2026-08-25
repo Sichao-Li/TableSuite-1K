@@ -11,6 +11,7 @@ from typing import Any
 
 from tablesuite.benchmark import Benchmark, BenchmarkSubset
 from tablesuite.catalog import Catalog
+from tablesuite.generation import generate_task
 from tablesuite.release import (
     TaskGenerationConfig,
     build_huggingface_release,
@@ -58,6 +59,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--release", type=Path, required=True)
     validate.add_argument("--source", type=Path)
+
+    generate = commands.add_parser(
+        "generate",
+        help="Generate a deterministic local task bundle",
+    )
+    _add_reference_arguments(generate)
+    generate.add_argument("--source", type=Path, required=True)
+    generate.add_argument(
+        "--name",
+        choices=["cell_grounding", "table_question_answering"],
+        required=True,
+    )
+    generate.add_argument(
+        "--split",
+        choices=[
+            "train",
+            "validation",
+            "episode_test",
+            "dataset_test",
+            "template_test",
+            "composition_test",
+        ],
+        default="train",
+    )
+    generate.add_argument("--dataset-id", action="append", default=[])
+    generate.add_argument(
+        "--task-family",
+        choices=["classification", "regression"],
+        action="append",
+        default=[],
+    )
+    generate.add_argument("--max-datasets", type=int)
+    generate.add_argument("--items-per-dataset", type=int)
+    generate.add_argument("--max-items", type=int)
+    generate.add_argument("--seed", type=int, default=0)
+    generate.add_argument("--output", type=Path, required=True)
 
     info = commands.add_parser("info", help="Summarize a reference catalog")
     _add_reference_arguments(info)
@@ -188,6 +225,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         )
         return
+    if args.command == "generate":
+        _run_generate(args)
+        return
     if args.command == "task":
         _run_task(args)
         return
@@ -303,6 +343,26 @@ def _run_build_release(args: argparse.Namespace) -> None:
             shard_size=args.shard_size,
         ),
     )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+
+
+def _run_generate(args: argparse.Namespace) -> None:
+    generated = generate_task(
+        args.reference,
+        args.name,
+        source=args.source,
+        split=args.split,
+        revision=args.revision,
+        dataset_ids=args.dataset_id,
+        task_families=args.task_family,
+        max_datasets=args.max_datasets,
+        items_per_dataset=args.items_per_dataset,
+        max_items=args.max_items,
+        seed=args.seed,
+    )
+    generated.save(args.output)
+    summary = generated.manifest.to_dict()
+    summary["output"] = str(args.output)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

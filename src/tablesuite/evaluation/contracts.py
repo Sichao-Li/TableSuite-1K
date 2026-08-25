@@ -297,11 +297,12 @@ class PlanRegistry:
 
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        lines = [
-            json.dumps(plan.to_record(), ensure_ascii=False, sort_keys=True)
-            for plan in self._plans
-        ]
-        destination.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        with destination.open("w", encoding="utf-8") as handle:
+            for plan in self._plans:
+                handle.write(
+                    json.dumps(plan.to_record(), ensure_ascii=False, sort_keys=True)
+                    + "\n"
+                )
 
     @classmethod
     def load(cls, path: str | Path) -> PlanRegistry:
