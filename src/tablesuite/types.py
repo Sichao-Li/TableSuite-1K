@@ -330,7 +330,7 @@ class ICLPredictionRequest:
 
 @dataclass(frozen=True)
 class PredictionGold:
-    """Evaluation-only targets associated with one prediction request."""
+    """Local evaluation targets kept outside the rendered model request."""
 
     request_id: str
     query_targets: tuple[Any, ...]
@@ -338,7 +338,7 @@ class PredictionGold:
 
 @dataclass(frozen=True)
 class SerializedTablePredictionExample:
-    """A serialized-table request paired with inaccessible evaluation gold."""
+    """A serialized-table request paired with separate evaluation targets."""
 
     request: SerializedTablePredictionRequest
     gold: PredictionGold
@@ -352,7 +352,7 @@ class SerializedTablePredictionExample:
 
 @dataclass(frozen=True)
 class ICLPredictionExample:
-    """A zero/few-shot request paired with inaccessible evaluation gold."""
+    """A zero/few-shot request paired with separate evaluation targets."""
 
     request: ICLPredictionRequest
     gold: PredictionGold

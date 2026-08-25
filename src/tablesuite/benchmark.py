@@ -176,7 +176,7 @@ class BenchmarkSubset:
         *,
         rows_per_table: int | None = None,
     ) -> Iterator[SerializedTablePredictionExample]:
-        """Yield feature-only tables with private per-row targets.
+        """Yield feature-only tables with separate per-row evaluation targets.
 
         By default, each request contains every source row with a valid target.
         ``rows_per_table`` creates deterministic source-order chunks for models

@@ -3,7 +3,7 @@
 ## Prediction
 
 Every prediction example consists of an input-only request and separate
-`PredictionGold`. Private query targets cannot be rendered because they are
+`PredictionGold`. Evaluation targets cannot be rendered because they are
 absent from the request object; only explicitly selected support labels may be
 visible. All official prediction protocols are inference-only: no fine-tuning,
 fitting, or per-dataset parameter updates are permitted.
@@ -33,14 +33,14 @@ demonstrations. Few-shot requests expose exactly 4, 16, or 32 frozen support
 rows.
 
 The zero-label serialized protocol still asks for the registered OpenML target
-for each row and scores against private target values. It is label-free
+for each row and scores against separate evaluation targets. It is label-free
 inference, not a clustering task; arbitrary cluster identifiers require a
 separate permutation-invariant evaluation contract.
 
 Few-shot classification episodes are executable only when every query class
 occurs in the visible support labels; regression episodes require finite
 support and query targets. Every protocol is inference-only. OpenML targets
-provide private gold, not permission to update model parameters.
+provide local evaluation targets, not permission to update model parameters.
 
 ## Semantic Grounding
 
@@ -58,7 +58,7 @@ equivalence.
 primitive, not an additional scored task. Serialized prediction uses a
 multi-row feature slice; ICL uses demonstration and query slices; cell
 grounding uses a contextual one-row slice. Task constructors control target
-visibility so private targets cannot enter model inputs.
+visibility so evaluation targets cannot enter model inputs.
 
 ## Partitions
 

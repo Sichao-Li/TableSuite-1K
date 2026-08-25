@@ -53,6 +53,28 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert first_summary["task_counts"] == second_summary["task_counts"]
     assert (first / "README.md").is_file()
     assert (first / "datasets" / "train" / "part-00000.parquet").is_file()
+    assert (first / "metadata" / "release_audit.json").is_file()
+    assert not (first / "release_summary.json").exists()
+    assert not (first / "release_summary.md").exists()
+    assert first_summary["catalog_counts"] == {
+        "datasets": 4,
+        "grounding_tasks": 3,
+        "prediction_episodes": 3,
+        "table_prediction_tasks": 3,
+    }
+    assert first_summary["release_version"] == "1.2.1"
+    reference_summary = json.loads(
+        (first / "reference_summary.json").read_text(encoding="utf-8")
+    )
+    assert set(reference_summary) == {
+        "configs",
+        "contains_source_values",
+        "reference_id",
+        "release_version",
+        "schema_version",
+        "source_provider",
+    }
+    assert reference_summary["release_version"] == "1.2.1"
     assert set(get_dataset_config_names(str(first))) == {
         "datasets",
         "table_prediction_tasks",
@@ -61,37 +83,58 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "cell_grounding",
         "table_question_answering",
     }
-    table_prediction = load_dataset(
+    table_prediction_splits = load_dataset(
         str(first),
         "table_prediction_tasks",
-        split="train",
         cache_dir=str(tmp_path / "hf-cache-prediction"),
     )
+    assert sum(len(split) for split in table_prediction_splits.values()) == 3
+    table_prediction = table_prediction_splits["train"]
     assert table_prediction[0]["protocol"] == "zero_label_serialized_table"
     assert table_prediction[0]["input_interface"] == "serialized_table"
     assert table_prediction[0]["parameter_updates"] is False
-    assert table_prediction[0]["visible_label_count"] == 0
-    assert table_prediction[0]["target_visibility"] == "private_evaluation_only"
+    assert table_prediction[0]["target_visibility"] == "excluded_from_model_input"
+    assert "feature_columns" not in table_prediction.column_names
+    assert "reference_policy" not in table_prediction.column_names
     assert "fold_policy" not in table_prediction.column_names
+    assert {
+        row["dataset_id"]
+        for split in table_prediction_splits.values()
+        for row in split
+    } == {"openml_101", "openml_102", "openml_103"}
 
-    prediction_episodes = load_dataset(
+    prediction_episode_splits = load_dataset(
         str(first),
         "prediction_episodes",
-        split="train",
         cache_dir=str(tmp_path / "hf-cache-icl"),
     )
-    assert prediction_episodes[0]["input_interfaces"] == [
-        "row_examples",
-        "serialized_table",
-    ]
-    assert prediction_episodes[0]["parameter_updates"] is False
+    assert sum(len(split) for split in prediction_episode_splits.values()) == 3
+    prediction_episodes = prediction_episode_splits["train"]
     assert prediction_episodes[0]["shots"] == 4
-    assert prediction_episodes[0]["zero_shot_icl_derivable"] is True
-    assert prediction_episodes[0]["serialized_table_query_scopes"] == [
-        "full_table",
-        "episode",
-    ]
+    assert prediction_episodes[0]["target_visibility"] == "excluded_from_model_input"
+    assert "feature_columns" not in prediction_episodes.column_names
+    assert "protocols" not in prediction_episodes.column_names
     assert "k" not in prediction_episodes.column_names
+    assert {
+        row["dataset_id"]
+        for split in prediction_episode_splits.values()
+        for row in split
+    } == {"openml_101", "openml_102", "openml_103"}
+    grounding_splits = load_dataset(
+        str(first),
+        "grounding_tasks",
+        cache_dir=str(tmp_path / "hf-cache-grounding"),
+    )
+    assert sum(len(split) for split in grounding_splits.values()) == 3
+    dataset_splits = load_dataset(
+        str(first),
+        "datasets",
+        cache_dir=str(tmp_path / "hf-cache-datasets"),
+    )
+    assert sum(len(split) for split in dataset_splits.values()) == 4
+    dataset_catalog = dataset_splits["train"]
+    assert "metadata_tier" not in dataset_catalog.column_names
+    assert "source_review_status" not in dataset_catalog.column_names
     hub_rows = load_dataset(
         str(first),
         "cell_grounding",
@@ -232,6 +275,12 @@ def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:
         _dataset_record("openml_102", "102", "validation", "cluster_validation", 32),
         _dataset_record("openml_103", "103", "test", "cluster_test", 32),
     ]
+    invalid = {
+        **_dataset_record("openml_104", "104", "train", "cluster_invalid", 8),
+        "feature_columns": [],
+        "n_features": 0,
+    }
+    datasets.append(invalid)
     table_prediction_tasks = [
         {
             **dataset,
@@ -257,7 +306,11 @@ def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:
         {
             **dataset,
             "task_id": f"{dataset['dataset_id']}:cell_fact_equivalence",
-            "eligible_columns": ["Age", "Income", "Group", "City"],
+            "eligible_columns": (
+                ["Age", "Income", "Group", "City"]
+                if dataset["feature_columns"]
+                else []
+            ),
             "excluded_identifier_columns": [],
             "sampler": "column_balanced_v1",
             "sampler_seed": 0,
@@ -275,14 +328,20 @@ def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:
             {
                 "schema_version": "1.0",
                 "reference_id": "openml-table-benchmark:v1.1",
-                "datasets": 3,
-                "episodes": 3,
+                "datasets": 4,
+                "episodes": 4,
             }
         ),
         encoding="utf-8",
     )
     for dataset in datasets:
         count = int(dataset["n_rows"])
+        if not dataset["feature_columns"]:
+            pq.write_table(
+                pa.table({"Target": [index % 2 for index in range(count)]}),
+                source / f"{dataset['source_id']}.parquet",
+            )
+            continue
         pq.write_table(
             pa.table(
                 {

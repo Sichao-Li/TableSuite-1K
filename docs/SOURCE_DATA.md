@@ -31,10 +31,6 @@ that a source identity, schema, target, task protocol, and split are recorded
 reproducibly. It does not assert redistribution clearance or transfer the
 upstream table's license to benchmark users.
 
-Internal source-review queues and release-assembly records are maintained by
-the benchmark authors, but are deliberately not runtime concepts or public API
-filters.
-
 ## User-Directed Materialization
 
 The package downloads only datasets explicitly bounded by `--dataset-id`,

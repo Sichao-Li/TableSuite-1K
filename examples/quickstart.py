@@ -20,6 +20,12 @@ def main() -> None:
         ],
     )
     parser.add_argument("--split", default="dataset_test")
+    parser.add_argument(
+        "--dataset-id",
+        action="append",
+        default=[],
+        help="Limit loading to one or more already materialized datasets",
+    )
     args = parser.parse_args()
 
     task = load_task(
@@ -27,6 +33,7 @@ def main() -> None:
         args.name,
         split=args.split,
         source=args.source,
+        dataset_ids=args.dataset_id,
     )
     print(task.summary())
     print()

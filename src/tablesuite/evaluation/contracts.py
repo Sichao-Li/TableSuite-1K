@@ -389,7 +389,7 @@ class GenerationReceipt:
 
 @dataclass(frozen=True)
 class EvaluationItem:
-    """One runtime request paired with private gold and an audit receipt."""
+    """One runtime request paired with separate gold and an audit receipt."""
 
     request: EvaluationRequest
     gold: EvaluationGold

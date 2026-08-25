@@ -1,281 +1,179 @@
 # TableSuite-1K
 
-**A comprehensive benchmark for tabular prediction, in-context learning, cell
-grounding, and table question answering over 1,000 OpenML-referenced tables.**
+**A source-grounded benchmark for tabular prediction, cell grounding, and
+table question answering over 1,000 OpenML-referenced datasets.**
 
-This repository provides the companion Python package and release-authoring
-tools for a value-free Hugging Face benchmark over 1,000 OpenML-referenced
-tables. The first release has two independently loadable official tasks:
+TableSuite-1K publishes deterministic task definitions and a small Python
+interface. Source values remain on OpenML: the Hugging Face release stores
+dataset identities, row/column references, operations, and scoring policies,
+but no copied table values or model outputs.
 
-| Hugging Face configuration | Model input | Evaluated output |
-| --- | --- | --- |
-| `cell_grounding` | contextual source row and question | exact cell fact |
-| `table_question_answering` | source subtable and question | programmatic table answer |
+## What Is Released
 
-Questions are rendered deterministically when an item is accessed. Gold is
-computed from frozen source references and typed operations, never authored by
-an LLM. The model receives a prompt without the answer.
+The catalog contains 1,000 OpenML dataset references. Task eligibility is
+reported separately:
 
-Prediction evaluation is also inference-only. It exposes four explicit
-protocols over two intentionally different interfaces:
+| Surface | Public records | Purpose |
+| --- | ---: | --- |
+| `datasets` | 1,000 | source, schema, split, target, and license metadata |
+| `table_prediction_tasks` | 998 | executable zero-label table prediction contracts |
+| `prediction_episodes` | 35,472 | frozen 4/16/32-shot support/query references |
+| `grounding_tasks` | 989 | eligible non-target columns for custom grounding |
+| `cell_grounding` | 50,012 | official exact-cell evaluation plans |
+| `table_question_answering` | 22,448 | official programmatic table-QA plans |
 
-| Protocol | Runtime input | Visible labels |
-| --- | --- | --- |
-| `zero_shot_icl` | target-hidden query rows | none |
-| `few_shot_icl` | labelled row examples followed by target-hidden queries | 4/16/32 demonstrations |
-| `zero_label_serialized_table` | one feature-only table | none |
-| `partially_labeled_serialized_table` | one table with labelled support rows and masked query rows | 4/16/32 support labels |
-
-All four protocols forbid fitting, fine-tuning, and per-dataset parameter
-updates. OpenML targets are private evaluation truth unless they are explicitly
-exposed as support labels by a label-visible protocol.
+The two official task configurations cover 933 eligible datasets in total.
+The 1,000-dataset catalog remains available for dataset-level studies even
+when a source is too narrow for a particular task.
 
 ## Install
 
 ```bash
-pip install 'tablesuite[local,hf] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.0'
+pip install \
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.1'
 ```
 
-Add `openml` when downloading source tables directly:
+## Runnable Quickstart
 
-```bash
-pip install 'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.0'
-```
-
-## Load One Task
-
-```python
-from tablesuite import load_task
-
-qa = load_task(
-    "Lester1996/TableSuite-1K",
-    "table_question_answering",
-    split="dataset_test",
-    source="openml-parquet",
-    revision="v1.2.0",
-)
-
-example = qa[0]
-print(example.prompt)
-
-response = model(example.prompt)
-print(qa.score(example.id, response))
-```
-
-`TaskDataset` supports integer indexing, stable-ID indexing, iteration, and a
-compact metadata summary:
-
-```python
-same_example = qa[example.id]
-print(qa.summary())
-```
-
-Evaluate a complete submission with one mapping:
-
-```python
-predictions = {example.id: model(example.prompt) for example in qa}
-report = qa.evaluate(predictions)
-print(report.to_dict())
-```
-
-The report contains micro accuracy, dataset-macro accuracy,
-dedup-cluster-macro accuracy, parse-failure rate, and accuracy by operation.
-Missing examples fail loudly unless `allow_partial=True` is explicitly used
-for a smoke test.
-
-The first release does not bundle prediction packets or an integrated
-reasoning task. Prediction interfaces are represented by the
-`table_prediction_tasks` and `prediction_episodes` reference configurations.
-No predictor or LLM is invoked implicitly.
-
-## Prediction Interfaces
-
-Zero-label serialized-table prediction evaluates every eligible row in one
-feature-only table by default. Models with bounded input capacity may request
-deterministic chunks; chunking preserves source order and does not sample or
-drop rows.
-
-```python
-from tablesuite import (
-    Benchmark,
-    Selection,
-    render_serialized_table_prediction,
-)
-
-benchmark = Benchmark.from_path("reference-package", "openml-parquet")
-subset = benchmark.select(
-    Selection(
-        tasks=("zero_label_serialized_table",),
-        dataset_ids=("openml_1",),
-    )
-)
-example = next(subset.zero_label_serialized_table(rows_per_table=128))
-print(render_serialized_table_prediction(example.request).input_text)
-```
-
-Few-shot ICL uses row demonstrations rather than table serialization. Zero-shot
-ICL removes those demonstrations while preserving a source-validated frozen
-query set. The same support/query references can also be rendered as one
-partially labelled table. By default that table retains the frozen support rows
-and predicts every other eligible source row. Pass `query_scope="episode"` to
-compare serialization against few-shot ICL on exactly the same query rows.
-
-```python
-from tablesuite import (
-    render_icl_prediction,
-    render_serialized_table_prediction,
-)
-
-subset = benchmark.select(
-    Selection(
-        tasks=(
-            "zero_shot_icl",
-            "few_shot_icl",
-            "partially_labeled_serialized_table",
-        ),
-        dataset_ids=("openml_1",),
-        shots=(4,),
-    )
-)
-print(render_icl_prediction(next(subset.zero_shot_icl()).request).input_text)
-print(render_icl_prediction(next(subset.few_shot_icl()).request).input_text)
-print(
-    render_serialized_table_prediction(
-        next(
-            subset.partially_labeled_serialized_table(
-                query_scope="episode"
-            )
-        ).request
-    ).input_text
-)
-```
-
-## Hugging Face-Native Access
-
-The task specifications are ordinary Hugging Face dataset configurations and
-splits. They can be inspected without the companion package:
-
-```python
-from datasets import load_dataset
-
-items = load_dataset(
-    "Lester1996/TableSuite-1K",
-    "table_question_answering",
-    split="dataset_test",
-)
-print(items[0]["item_id"])
-```
-
-These rows are deliberately value-free. Each freezes an item ID, source rows
-and columns, semantic operation, rendering seed, and scoring policy. The
-companion package turns that specification into the model-ready prompt and
-scores the response against programmatically computed gold.
-
-## Evaluation Axes
-
-Official task plans isolate distinct transfer questions:
-
-| Split | What changes? |
-| --- | --- |
-| `validation` | validation dataset clusters |
-| `episode_test` | disjoint rows from training dataset clusters |
-| `dataset_test` | held-out dataset clusters |
-| `template_test` | disjoint rows and held-out question wording |
-| `composition_test` | disjoint rows and composed filter-then-argmax QA |
-
-Cell grounding presents one row with 4–8 eligible non-target columns. Table QA
-presents compact 4/8/16-row subtables with 3–8 columns. Release authoring
-rejects missing operands, non-finite values, empty filters, and tied maxima.
-
-The repository also exposes four reference configurations used to select or
-materialize source data:
-
-| Configuration | Purpose |
-| --- | --- |
-| `datasets` | OpenML identity, schema, split, and licensing metadata |
-| `table_prediction_tasks` | zero-label serialized-table target and metric contracts |
-| `prediction_episodes` | frozen support/query references used by ICL and partially labelled tables |
-| `grounding_tasks` | eligible non-target columns and sampling contracts |
-
-## Roadmap
-
-Post-v1.2.0 work is intentionally separated from the frozen release contract.
-The ordered plan covers ablation, attribution, composed reasoning, and
-multi-view evaluation; see [docs/ROADMAP.md](docs/ROADMAP.md).
-
-## Source Tables
-
-The HF repository publishes value-free references rather than copying 1,000
-heterogeneously licensed OpenML tables. OpenML remains the source distributor,
-and each materialized table retains its upstream terms. See
-[docs/SOURCE_DATA.md](docs/SOURCE_DATA.md).
-
-TableSuite-1K is an independent research benchmark and is not affiliated with
-or endorsed by OpenML.
-
-Download a bounded subset:
+Download one explicitly selected source table directly from OpenML:
 
 ```bash
 tablesuite fetch-openml \
   --reference 'Lester1996/TableSuite-1K' \
+  --revision v1.2.1 \
   --output openml-parquet \
-  --dataset-split test \
-  --max-datasets 10 \
+  --dataset-id openml_45069 \
   --accept-source-terms
 ```
 
-Source files are stored as `<openml_data_id>.parquet`. TableSuite-1K validates row
-count, required features, and the registered target; byte-identical source
-files and SHA-256 checks are not required.
+Load the matching official QA examples and score a response:
 
-## CLI
+```python
+from tablesuite import load_task
 
-Preview and optionally score one official task item:
+task = load_task(
+    "Lester1996/TableSuite-1K",
+    "table_question_answering",
+    split="dataset_test",
+    source="openml-parquet",
+    revision="v1.2.1",
+    dataset_ids=("openml_45069",),
+)
 
-```bash
-tablesuite task \
-  --reference 'Lester1996/TableSuite-1K' \
-  --source openml-parquet \
-  --name cell_grounding \
-  --split dataset_test \
-  --index 0 \
-  --response '42'
+example = task[0]
+print(example.prompt)
+
+response = input(f"{example.prompt}\n\nAnswer: ")
+print(task.score(example.id, response))
 ```
 
-Inspect reference metadata:
+Evaluate a complete split or bounded dataset subset with one mapping:
 
-```bash
-tablesuite info \
-  --reference 'Lester1996/TableSuite-1K'
+```python
+predictions = {example.id: model(example.prompt) for example in task}
+report = task.evaluate(predictions)
+print(report.to_dict())
 ```
 
-The existing `select`, `preview`, and `table` commands remain available for
-building custom zero/few-shot ICL, zero/partial-label serialized-table,
-grounding, row, and subtable subsets.
+Reports include micro accuracy, dataset-macro accuracy,
+dedup-cluster-macro accuracy, parse-failure rate, and accuracy by operation.
+Missing responses fail unless `allow_partial=True` is requested explicitly.
 
-## Build The Release
+## Official Tasks
 
-Maintainers create the final six-configuration directory atomically:
+### Cell Grounding
 
-```bash
-tablesuite build-release \
-  --reference reference-package \
-  --source openml-parquet \
-  --dataset-card huggingface/README.md \
-  --output huggingface-release
+Input: one contextual source row containing 4-8 eligible feature columns and a
+lookup question. Output: the exact requested cell value.
 
-tablesuite validate-release \
-  --release huggingface-release \
-  --source openml-parquet
+### Table Question Answering
+
+Input: a 4/8/16-row source subtable with 3-8 columns and a deterministic
+question. Output: a programmatically computed aggregate or lookup answer.
+
+Questions are rendered at access time. Gold answers are computed from source
+references and typed operations, never authored by an LLM.
+
+Official task plans provide distinct evaluation axes:
+
+| Split | Held-out factor |
+| --- | --- |
+| `validation` | validation dataset clusters |
+| `episode_test` | rows from training dataset clusters |
+| `dataset_test` | dataset clusters |
+| `template_test` | rows and question wording |
+| `composition_test` | composed filter-then-argmax QA |
+
+## Prediction Interfaces
+
+Prediction is inference-only: no fitting, fine-tuning, or per-dataset parameter
+updates are part of these protocols.
+
+| Protocol | Input | Visible labels |
+| --- | --- | --- |
+| `zero_shot_icl` | target-hidden query rows | none |
+| `few_shot_icl` | row demonstrations plus queries | 4/16/32 |
+| `zero_label_serialized_table` | one feature-only table | none |
+| `partially_labeled_serialized_table` | support-labelled table with masked queries | 4/16/32 |
+
+Evaluation targets are stored separately from rendered model requests. They
+are open benchmark targets recoverable from the referenced OpenML source, not
+secret server-side labels.
+
+```python
+from tablesuite import Benchmark, Selection, render_icl_prediction
+
+benchmark = Benchmark.from_huggingface(
+    "Lester1996/TableSuite-1K",
+    "openml-parquet",
+    revision="v1.2.1",
+)
+subset = benchmark.select(
+    Selection(
+        tasks=("few_shot_icl",),
+        dataset_ids=("openml_10",),
+        shots=(4,),
+        max_episodes_per_dataset_per_shot=1,
+    )
+)
+case = next(subset.few_shot_icl())
+print(render_icl_prediction(case.request).input_text)
 ```
 
-The builder audits dataset-cluster partitions, source-cell overlap across
-splits, target-column exclusion, value-free plan records, and execution of
-every generated item before making the output visible.
+See [docs/PROTOCOLS.md](docs/PROTOCOLS.md) for exact prediction and grounding
+contracts.
 
-## Stable Python API
+## Hugging Face-Native Access
 
-The primary evaluator surface is intentionally small:
+Every configuration is ordinary Parquet and can be inspected without the
+companion package:
+
+```python
+from datasets import load_dataset
+
+plans = load_dataset(
+    "Lester1996/TableSuite-1K",
+    "cell_grounding",
+    split="dataset_test",
+    revision="v1.2.1",
+)
+print(plans[0]["item_id"])
+```
+
+Rows in official task configs are value-free plans. The package resolves the
+referenced OpenML source, renders model input, and computes gold at runtime.
+
+## Source and Licensing Boundary
+
+OpenML remains the source-table distributor. Each downloaded table retains its
+upstream terms; `license_claim` is provenance metadata, not a license granted
+by TableSuite-1K. The package downloads only an explicit bounded selection and
+writes a local `SOURCE_NOTICES.json`.
+
+TableSuite-1K is independent from and not endorsed by OpenML. See
+[docs/SOURCE_DATA.md](docs/SOURCE_DATA.md).
+
+## Stable User API
 
 ```text
 load_task
@@ -285,22 +183,38 @@ TaskScore
 TaskReport
 ```
 
-`Benchmark`, `Selection`, `TableSlice`, and rendering helpers form the advanced
-source-selection API. Frozen task-authoring contracts live under
-`tablesuite.evaluation`; maintainer APIs live under
-`tablesuite.authoring` and `tablesuite.release`.
+`Benchmark`, `Selection`, `TableSlice`, and rendering helpers are the advanced
+prediction/source-selection API. Maintainer authoring utilities are documented
+separately and are not part of the stable user contract.
 
-## Development
+## CLI
+
+```bash
+tablesuite info --reference 'Lester1996/TableSuite-1K' --revision v1.2.1
+
+tablesuite task \
+  --reference 'Lester1996/TableSuite-1K' \
+  --revision v1.2.1 \
+  --source openml-parquet \
+  --name table_question_answering \
+  --split dataset_test \
+  --dataset-id openml_45069 \
+  --index 0
+```
+
+## Development and Release Authoring
 
 ```bash
 python -m pytest -q
 ruff check src tests examples
 ```
 
-See [docs/TASK_EVALUATION.md](docs/TASK_EVALUATION.md) for task semantics,
-[docs/PROTOCOLS.md](docs/PROTOCOLS.md) for prediction/grounding protocols, and
-[docs/REFERENCE_FORMAT.md](docs/REFERENCE_FORMAT.md) for the HF reference
-schema. Maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
+The public authoring implementation is retained for scientific
+reproducibility. Maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
+The repository contains no model weights, embeddings, raw OpenML tables,
+cluster scripts, experiment reports, leaderboard, or LLM reasoner.
 
-This public package contains no model weights, embeddings, private experiment
-reports, cluster launch scripts, leaderboard, or LLM reasoner.
+## Citation
+
+See [CITATION.cff](CITATION.cff). A paper citation will be added when its
+bibliographic metadata is final.

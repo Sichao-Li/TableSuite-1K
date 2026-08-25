@@ -1,6 +1,6 @@
 # Benchmark Roadmap
 
-The v1.2.0 protocol and task contracts remain frozen. The next benchmark work is
+The v1.2.1 protocol and task contracts remain frozen. The next benchmark work is
 ordered as follows:
 
 1. **Ablation**
@@ -19,4 +19,4 @@ ordered as follows:
    Add equivalent Markdown, JSON, and key-value table renderings, including
    held-out-view transfer, without changing the underlying source fact or gold.
 
-These items are planned work and are not claims of the v1.2.0 release.
+These items are planned work and are not claims of the v1.2.1 release.

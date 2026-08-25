@@ -8,7 +8,7 @@ source tables or research artifacts.
 - GitHub: `Sichao-Li/TableSuite-1K`
 - Hugging Face: `Lester1996/TableSuite-1K`
 - Python distribution and CLI: `tablesuite`
-- release tag: `v1.2.0`
+- release tag: `v1.2.1`
 
 The first Hub upload remains private until all six configurations pass the
 fresh-cache validation below. Add the associated paper citation when its
@@ -32,12 +32,13 @@ tablesuite build-release \
   --output /path/to/huggingface-release
 
 tablesuite validate-release \
-  --release /path/to/huggingface-release \
-  --source /path/to/openml-parquet
+  --release /path/to/huggingface-release
 ```
 
-Review `release_summary.json` and `release_summary.md`. The release directory
-must contain exactly six configured datasets plus audit metadata. It must not
+`build-release` already executes every official task plan against the source;
+the second command is a fast structural recheck. Review
+`metadata/release_audit.json`. The release directory must contain exactly six
+configured datasets plus that machine-readable audit. It must not
 contain OpenML source Parquet files, model outputs, prediction packets,
 embeddings, checkpoints, logs, or experiment reports.
 
@@ -54,7 +55,7 @@ REPO='Lester1996/TableSuite-1K'
 hf repos create "$REPO" --repo-type dataset --private
 hf upload "$REPO" /path/to/huggingface-release . \
   --repo-type dataset \
-  --commit-message 'TableSuite-1K v1.2.0 release candidate'
+  --commit-message 'TableSuite-1K v1.2.1 release candidate'
 ```
 
 `hf upload` is resumable and is the current replacement for the deprecated

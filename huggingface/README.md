@@ -70,90 +70,47 @@ configs:
 
 # TableSuite-1K
 
-**A comprehensive benchmark for tabular prediction, in-context learning, cell
-grounding, and table question answering over 1,000 OpenML-referenced tables.**
+TableSuite-1K is a source-grounded benchmark for tabular prediction, cell
+grounding, and table question answering over 1,000 OpenML-referenced datasets.
+This repository stores compact task specifications, not copied source tables,
+rendered answers, model outputs, or checkpoints.
 
-This repository contains a value-free benchmark catalog over 1,000
-OpenML-referenced datasets. It defines inference-only zero/few-shot ICL and
-zero/partial-label serialized-table interfaces plus official cell-grounding
-and programmatic table-QA tasks. It does **not** redistribute the referenced
-source tables.
+## Release Contents
 
-## Configurations
+| Configuration | Records | Unit |
+| --- | ---: | --- |
+| `datasets` | 1,000 | source, schema, target, split, and license metadata |
+| `table_prediction_tasks` | 998 | executable zero-label prediction contracts |
+| `prediction_episodes` | 35,472 | frozen 4/16/32-shot support/query references |
+| `grounding_tasks` | 989 | eligible columns for custom grounding |
+| `cell_grounding` | 50,012 | official exact-cell evaluation plans |
+| `table_question_answering` | 22,448 | official programmatic table-QA plans |
 
-| Configuration | Unit | Contains source values? |
-| --- | --- | --- |
-| `datasets` | dataset identity and source/task contract | No |
-| `table_prediction_tasks` | zero-label table target and metric contract | No |
-| `prediction_episodes` | fixed support/query references and shot count | No |
-| `grounding_tasks` | eligible columns and sampler contract | No |
-| `cell_grounding` | contextual source-cell evaluation plans | No |
-| `table_question_answering` | typed table operations and source slices | No |
+The `datasets` configuration is the canonical metadata table. Other catalog
+configurations contain task-specific fields and join to it by `dataset_id`.
+The official grounding and QA plans cover 933 eligible datasets.
 
-The two executable task configurations store source references and operations,
-not copied values, rendered questions, or gold answers. Runtime rendering and
-programmatic scoring are deterministic. No LLM authors the gold data.
+## Quickstart
 
-All prediction evaluation is parameter-update-free. The companion package
-exposes four explicit protocols: `zero_shot_icl`, `few_shot_icl`,
-`zero_label_serialized_table`, and `partially_labeled_serialized_table`.
-Zero-label table prediction renders features only:
+Install the matching companion package:
 
-```text
-Predict "loan_status" for every row.
-
-| row_id | age | income |
-| --- | --- | --- |
-| r0 | 35 | 60000 |
-| r1 | 52 | 30000 |
+```bash
+pip install \
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.1'
 ```
 
-In-context episodes use a different row-example interface:
+Materialize one explicitly selected source table from OpenML:
 
-```text
-Target: loan_status
-
-Row A: age=35, income=60000 -> approved
-Query q0: age=44, income=50000 -> ?
+```bash
+tablesuite fetch-openml \
+  --reference 'Lester1996/TableSuite-1K' \
+  --revision v1.2.1 \
+  --output openml-parquet \
+  --dataset-id openml_45069 \
+  --accept-source-terms
 ```
 
-Positive shot counts expose frozen demonstrations. Zero-shot removes the
-demonstrations while retaining a source-validated frozen query set. The same
-frozen support/query references can instead be rendered as one partially
-labelled table, with support targets visible and query targets replaced by
-`?`. That protocol predicts all remaining eligible rows by default; an episode
-scope is available for an exact serialization comparison with few-shot ICL.
-None of these protocols updates model parameters.
-
-```text
-Predict "loan_status" for rows where the target is masked.
-
-| row_id | age | income | loan_status |
-| --- | --- | --- | --- |
-| r0 | 35 | 60000 | approved |
-| r1 | 52 | 30000 | denied |
-| r2 | 44 | 50000 | ? |
-```
-
-## Evaluation Splits
-
-`episode_test` uses disjoint rows from training dataset clusters;
-`dataset_test` uses held-out dataset clusters; `template_test` uses disjoint
-rows and held-out wording; and QA `composition_test` uses disjoint rows with a
-filter-then-argmax operation. These axes are reported separately.
-
-## Source Data and Licensing
-
-Source tables remain hosted by OpenML and retain their individual upstream
-licenses. Fields such as `license_claim` reproduce upstream provenance
-metadata; they do not grant rights from this repository. The repository-level
-`other` designation reflects those heterogeneous terms. Benchmark code is
-licensed separately in its GitHub repository.
-
-TableSuite-1K is an independent research benchmark and is not affiliated with
-or endorsed by OpenML.
-
-## Usage
+Load and score official QA examples for that dataset:
 
 ```python
 from tablesuite import load_task
@@ -163,37 +120,73 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
+    revision="v1.2.1",
+    dataset_ids=("openml_45069",),
 )
+
 example = task[0]
-score = task.score(example.id, model(example.prompt))
+response = input(f"{example.prompt}\n\nAnswer: ")
+print(task.score(example.id, response))
 ```
 
-Inspect the value-free specifications directly:
+Questions and answers are produced deterministically from the source slice and
+typed operation when an example is loaded. No LLM authors benchmark gold.
+
+## Task Interfaces
+
+**Cell grounding** presents one contextual source row with 4-8 eligible
+feature columns and asks for one exact cell value.
+
+**Table question answering** presents a 4/8/16-row subtable with 3-8 columns
+and asks a programmatic aggregate, comparison, filter, or lookup question.
+
+**Prediction** is inference-only and supports four renderings:
+
+| Protocol | Input | Visible labels |
+| --- | --- | --- |
+| `zero_shot_icl` | target-hidden row queries | none |
+| `few_shot_icl` | demonstrations plus row queries | 4/16/32 |
+| `zero_label_serialized_table` | feature-only table | none |
+| `partially_labeled_serialized_table` | support-labelled table with masked queries | 4/16/32 |
+
+Prediction targets are excluded from rendered model input and returned
+separately for local evaluation. They are open benchmark targets recoverable
+from the referenced OpenML source, not secret server-side labels.
+
+## Direct Specification Access
+
+All six configurations are ordinary Parquet datasets:
 
 ```python
 from datasets import load_dataset
 
-items = load_dataset(
+plans = load_dataset(
     "Lester1996/TableSuite-1K",
-    "table_question_answering",
+    "cell_grounding",
     split="dataset_test",
+    revision="v1.2.1",
 )
+print(plans[0]["item_id"])
 ```
 
-Download only the selected OpenML sources:
+These rows are value-free plans. Use the companion package when you need
+source resolution, prompt rendering, and programmatic scoring.
 
-```bash
-tablesuite fetch-openml \
-  --reference 'Lester1996/TableSuite-1K' \
-  --output openml-parquet \
-  --dataset-split validation \
-  --max-datasets 10 \
-  --accept-source-terms
-```
+## Evaluation Splits
 
-See the GitHub repository for protocol definitions, deterministic rendering,
-evaluation rules, and the source-data policy.
+- `episode_test`: held-out rows from training dataset clusters.
+- `dataset_test`: held-out dataset clusters.
+- `template_test`: held-out rows and question wording.
+- `composition_test`: composed filter-then-argmax QA.
 
-The companion package represents arbitrary rows and subtables with
-`TableSlice(dataset_id, row_ids, columns)`. Collections of slices can span
-multiple selected datasets while preserving each source schema.
+Report these transfer axes separately.
+
+## Source and Licensing Boundary
+
+OpenML remains the source-table distributor. Every source retains its upstream
+terms; `license_claim` is provenance metadata, not a license granted by
+TableSuite-1K. The repository-level `other` designation reflects heterogeneous
+source terms. TableSuite-1K is independent from and not endorsed by OpenML.
+
+Code, full protocol documentation, and release validation instructions are at
+<https://github.com/Sichao-Li/TableSuite-1K>.

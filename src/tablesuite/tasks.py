@@ -243,12 +243,14 @@ def load_task(
     split: EvaluationSplit,
     source: str | Path,
     revision: str | None = None,
+    dataset_ids: Iterable[str] = (),
 ) -> TaskDataset:
     """Load one official HF task configuration and evaluation split.
 
     ``reference`` may be a Hugging Face dataset repository ID or a downloaded
     reference directory. Local task files are discovered under
-    ``tasks/<name>/<split>.{jsonl,parquet}``.
+    ``tasks/<name>/<split>.{jsonl,parquet}``. ``dataset_ids`` optionally limits
+    the split to an explicit, source-download-friendly subset.
     """
 
     if name not in _TASK_TYPES:
@@ -272,6 +274,23 @@ def load_task(
             include_task_manifests=False,
             reference_id=registry.plans[0].reference_id,
         )
+    requested = {str(value) for value in dataset_ids}
+    if requested:
+        known = {dataset.dataset_id for dataset in catalog.datasets}
+        if unknown := requested - known:
+            raise KeyError(f"unknown dataset IDs: {sorted(unknown)}")
+        registry = PlanRegistry(
+            tuple(
+                plan
+                for plan in registry.plans
+                if plan.source.dataset_id in requested
+            )
+        )
+        if not registry.plans:
+            raise ValueError(
+                f"task {name!r}/{split!r} has no examples for "
+                f"datasets {sorted(requested)}"
+            )
     return TaskDataset(
         name=name,
         split=split,

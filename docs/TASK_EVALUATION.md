@@ -1,6 +1,6 @@
 # Official Task Evaluation
 
-Status: **task-plan schema 1.1, frozen for TableSuite-1K v1.2.0**.
+Status: **task-plan schema 1.1, frozen for TableSuite-1K v1.2.1**.
 
 Users interact with ordinary Hugging Face configurations and splits. They do
 not construct evaluation runtimes or manipulate semantic plans.
@@ -50,7 +50,8 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v1.2.0",
+    revision="v1.2.1",
+    dataset_ids=("openml_45069",),
 )
 
 example = task[0]
@@ -82,6 +83,7 @@ tablesuite task \
   --source openml-parquet \
   --name table_question_answering \
   --split dataset_test \
+  --dataset-id openml_45069 \
   --index 0
 ```
 

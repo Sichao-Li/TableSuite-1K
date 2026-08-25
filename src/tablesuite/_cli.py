@@ -106,7 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="markdown",
     )
     preview.add_argument("--limit", type=int, default=3)
-    preview.add_argument("--show-gold", action="store_true")
+    preview.add_argument(
+        "--show-targets",
+        action="store_true",
+        help="Print local evaluation targets for diagnostics",
+    )
+    preview.add_argument(
+        "--show-gold",
+        dest="show_targets",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     preview.add_argument("--rows-per-table", type=int)
     preview.add_argument(
         "--query-scope",
@@ -155,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     task.add_argument("--item-id")
+    task.add_argument("--dataset-id", action="append", default=[])
     task.add_argument("--index", type=int, default=0)
     task.add_argument("--response")
     task.add_argument("--summary", action="store_true")
@@ -239,7 +250,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.task,
         args.view,
         args.limit,
-        args.show_gold,
+        args.show_targets,
         args.rows_per_table,
         args.query_scope,
         args.query_rows_per_table,
@@ -253,6 +264,7 @@ def _run_task(args: argparse.Namespace) -> None:
         split=args.split,
         source=args.source,
         revision=args.revision,
+        dataset_ids=args.dataset_id,
     )
     if args.summary:
         print(json.dumps(task.summary(), indent=2, sort_keys=True))
@@ -299,7 +311,7 @@ def _preview(
     task: str,
     view: str,
     limit: int,
-    show_gold: bool,
+    show_targets: bool,
     rows_per_table: int | None,
     query_scope: str,
     query_rows_per_table: int | None,
@@ -342,7 +354,7 @@ def _preview(
             else render_icl_prediction(example.request)
         )
         print(rendered.input_text)
-        if show_gold:
+        if show_targets:
             answers = {
                 alias: target
                 for alias, target in zip(
@@ -351,7 +363,7 @@ def _preview(
                     strict=True,
                 )
             }
-            print("\nGold:")
+            print("\nEvaluation targets:")
             print(json.dumps(answers, ensure_ascii=False, sort_keys=True))
         print("\n---\n")
 

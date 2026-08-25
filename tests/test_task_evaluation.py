@@ -404,6 +404,8 @@ def test_task_cli_previews_and_scores(
             "cell_grounding",
             "--split",
             "train",
+            "--dataset-id",
+            "openml_1",
             "--item-id",
             "grounding_cli",
             "--response",
@@ -414,6 +416,45 @@ def test_task_cli_previews_and_scores(
     output = capsys.readouterr().out
     assert "Question:" in output
     assert '"correct": true' in output
+
+
+def test_load_task_can_filter_a_bounded_dataset_subset(
+    benchmark_fixture: tuple[Path, Path],
+) -> None:
+    reference, source = benchmark_fixture
+    second = _plan(
+        plan_id="grounding_openml_2",
+        task="grounding",
+        evaluation_split="dataset_test",
+        dataset_split="test",
+        dedup_cluster_id="second_fixture",
+        source_id="2",
+        source=TableSlice("openml_2", ("1",), ("Height",)),
+        operation=OperationSpec("cell_lookup", {"column": "Height"}),
+        scoring=ScoringSpec("integer"),
+    )
+    PlanRegistry((second,)).save(
+        reference / "tasks" / "cell_grounding" / "dataset_test.jsonl"
+    )
+
+    task = load_task(
+        reference,
+        "cell_grounding",
+        split="dataset_test",
+        source=source,
+        dataset_ids=("openml_2",),
+    )
+
+    assert len(task) == 1
+    assert task[0].dataset_id == "openml_2"
+    with pytest.raises(KeyError, match="unknown dataset IDs"):
+        load_task(
+            reference,
+            "cell_grounding",
+            split="dataset_test",
+            source=source,
+            dataset_ids=("openml_missing",),
+        )
 
 
 def test_load_task_uses_huggingface_configuration_and_split(

@@ -1,32 +1,36 @@
 # Hugging Face Reference Format
 
-The reference repository contains two groups of value-free configurations.
-Four describe the reusable source/task catalog:
+The release contains six value-free configurations. Four form a compact
+source/task catalog:
 
-| Configuration | Unit | Purpose |
-| --- | --- | --- |
-| `datasets` | dataset | OpenML identity, schema, target, source adaptation, and dataset split |
-| `table_prediction_tasks` | dataset task | Zero-label table target and metrics |
-| `prediction_episodes` | candidate episode | Frozen support/query references and shot count |
-| `grounding_tasks` | dataset task | Eligible columns and deterministic sampler contract |
+| Configuration | Records | Purpose |
+| --- | ---: | --- |
+| `datasets` | 1,000 | OpenML identity, schema, target, source adaptation, split, and license claim |
+| `table_prediction_tasks` | 998 | Zero-label prediction protocol and metrics |
+| `prediction_episodes` | 35,472 | Frozen support/query references and shot count |
+| `grounding_tasks` | 989 | Eligible columns and deterministic sampler contract |
 
 The catalog intentionally excludes feature values, targets, support labels,
 query labels, rendered cell values, model outputs, and checkpoints.
 
+`datasets` is the canonical metadata configuration. The other three catalog
+configurations store only task-specific fields and join to it by `dataset_id`.
+This avoids repeating source URL, schema, target, and license metadata in every
+episode.
+
 Published `table_prediction_tasks` records declare `protocol =
-zero_label_serialized_table`, `input_interface = serialized_table`,
-`parameter_updates = false`, and zero visible labels. Published
-`prediction_episodes` records freeze support/query references and `shots` for
-`few_shot_icl` and `partially_labeled_serialized_table`. A `zero_shot_icl`
-request is derived by removing support labels while retaining the frozen query
-references.
+zero_label_serialized_table`, `input_interface = serialized_table`, and
+`parameter_updates = false`. Published `prediction_episodes` records freeze
+support/query references and `shots` for `few_shot_icl` and
+`partially_labeled_serialized_table`. A `zero_shot_icl` request is derived by
+removing support labels while retaining the frozen query references.
 
 Two additional configurations contain official evaluation items:
 
-| Configuration | Unit | Purpose |
-| --- | --- | --- |
-| `cell_grounding` | source cell | exact fact grounding |
-| `table_question_answering` | source subtable | programmatic table QA |
+| Configuration | Records | Purpose |
+| --- | ---: | --- |
+| `cell_grounding` | 50,012 | exact fact grounding |
+| `table_question_answering` | 22,448 | programmatic table QA |
 
 Each task configuration is divided into applicable evaluation splits such as
 `train`, `validation`, `episode_test`, `dataset_test`, `template_test`, and

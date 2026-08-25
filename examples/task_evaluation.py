@@ -22,6 +22,7 @@ def main() -> None:
     )
     parser.add_argument("split")
     parser.add_argument("--limit", type=int, default=3)
+    parser.add_argument("--dataset-id", action="append", default=[])
     args = parser.parse_args()
 
     task = load_task(
@@ -29,6 +30,7 @@ def main() -> None:
         args.name,
         split=args.split,
         source=args.source,
+        dataset_ids=args.dataset_id,
     )
     predictions: dict[str, str] = {}
     for example in islice(task, args.limit):

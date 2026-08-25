@@ -25,9 +25,11 @@ from tablesuite.evaluation import (
     audit_plans,
 )
 from tablesuite.source import ParquetSource
+from tablesuite.types import Selection
 
 TASK_CONFIGS = ("cell_grounding", "table_question_answering")
 RELEASE_CONFIGS = (*CONFIGS, *TASK_CONFIGS)
+RELEASE_VERSION = "1.2.1"
 
 
 def build_huggingface_release(
@@ -66,15 +68,18 @@ def build_huggingface_release(
         _validate_value_free(generated.plans)
         executed = _validate_execution(catalog, source, generated.plans)
 
-        _copy_reference_configs(reference_path, staging)
+        catalog_counts = _write_public_catalog(reference_path, staging)
+        _validate_public_catalog(Catalog.from_path(staging))
         shutil.copy2(card_path, staging / "README.md")
         _write_task_configs(staging, generated.plans, policy.shard_size)
         summary = {
             "schema_version": "1.2",
+            "release_version": RELEASE_VERSION,
             "release_kind": "value_free_huggingface_benchmark",
             "reference_id": catalog.reference_id,
             "passed": True,
             "configs": list(RELEASE_CONFIGS),
+            "catalog_counts": catalog_counts,
             "source_tables_redistributed": False,
             "rendered_questions_stored": False,
             "gold_answers_stored": False,
@@ -90,10 +95,7 @@ def build_huggingface_release(
                 "errors": list(audit.errors),
             },
         }
-        _write_json(staging / "release_summary.json", summary)
-        (staging / "release_summary.md").write_text(
-            _summary_markdown(summary), encoding="utf-8"
-        )
+        _write_json(staging / "metadata" / "release_audit.json", summary)
         staging.replace(destination)
         return summary
     except Exception:
@@ -123,6 +125,7 @@ def validate_huggingface_release(
     audit = audit_plans(plans)
     audit.require_passed()
     catalog = Catalog.from_path(root)
+    _validate_public_catalog(catalog)
     _validate_catalog_bindings(catalog, plans)
     _validate_value_free(plans)
     executed = 0
@@ -168,39 +171,53 @@ def _validate_inputs(
         raise ValueError(f"reference package is missing configurations: {missing}")
 
 
-def _copy_reference_configs(reference: Path, destination: Path) -> None:
-    for name in ("datasets", "grounding_tasks"):
-        shutil.copytree(_reference_config(reference, name), destination / name)
-    _rewrite_config(
-        _reference_config(reference, "table_prediction_tasks"),
-        destination / "table_prediction_tasks",
-        _table_prediction_record,
-    )
-    _rewrite_config(
-        _reference_config(reference, "prediction_episodes"),
-        destination / "prediction_episodes",
-        _prediction_episode_record,
-    )
+def _write_public_catalog(
+    reference: Path,
+    destination: Path,
+) -> dict[str, int]:
+    summaries = {
+        "datasets": _rewrite_config(
+            _reference_config(reference, "datasets"),
+            destination / "datasets",
+            _dataset_record,
+        ),
+        "table_prediction_tasks": _rewrite_config(
+            _reference_config(reference, "table_prediction_tasks"),
+            destination / "table_prediction_tasks",
+            _table_prediction_record,
+        ),
+        "prediction_episodes": _rewrite_config(
+            _reference_config(reference, "prediction_episodes"),
+            destination / "prediction_episodes",
+            _prediction_episode_record,
+        ),
+        "grounding_tasks": _rewrite_config(
+            _reference_config(reference, "grounding_tasks"),
+            destination / "grounding_tasks",
+            _grounding_record,
+        ),
+    }
     summary = reference / "reference_summary.json"
     if not summary.is_file():
         raise FileNotFoundError(summary)
-    shutil.copy2(summary, destination / summary.name)
-    for name in (
-        "REFERENCE_POLICY.md",
-        "reference_policy.json",
-        "DATASET_LICENSES.md",
-        "dataset_licenses.jsonl",
-    ):
-        candidate = reference / name
-        if candidate.is_file():
-            shutil.copy2(candidate, destination / name)
+    source_summary = json.loads(summary.read_text(encoding="utf-8"))
+    reference_summary = {
+        "schema_version": "1.2",
+        "release_version": RELEASE_VERSION,
+        "reference_id": str(source_summary["reference_id"]),
+        "source_provider": "openml",
+        "contains_source_values": False,
+        "configs": summaries,
+    }
+    _write_json(destination / summary.name, reference_summary)
+    return {name: summary["records"] for name, summary in summaries.items()}
 
 
 def _rewrite_config(
     source: Path,
     destination: Path,
-    transform: Callable[[dict[str, Any]], dict[str, Any]],
-) -> None:
+    transform: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> dict[str, Any]:
     try:
         import pyarrow as pa
         import pyarrow.parquet as pq
@@ -209,47 +226,115 @@ def _rewrite_config(
     files = sorted(source.rglob("*.parquet"))
     if not files:
         raise FileNotFoundError(f"no Parquet shards under {source}")
+    split_summaries: dict[str, dict[str, Any]] = {}
+    total = 0
     for source_file in files:
         output_file = destination / source_file.relative_to(source)
+        rows = [
+            output
+            for row in pq.read_table(source_file).to_pylist()
+            if (output := transform(dict(row))) is not None
+        ]
+        if not rows:
+            continue
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        rows = [transform(dict(row)) for row in pq.read_table(source_file).to_pylist()]
         pq.write_table(pa.Table.from_pylist(rows), output_file, compression="zstd")
+        split = output_file.parent.name
+        split_summary = split_summaries.setdefault(
+            split,
+            {"records": 0, "shards": []},
+        )
+        split_summary["records"] += len(rows)
+        split_summary["shards"].append(
+            str(output_file.relative_to(destination))
+        )
+        total += len(rows)
+    if total == 0:
+        raise ValueError(f"public configuration would be empty: {source.name}")
+    return {"records": total, "splits": split_summaries}
 
 
-def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any]:
-    output = {key: value for key, value in record.items() if key != "fold_policy"}
-    output.update(
-        {
-            "task_id": f"{record['dataset_id']}:zero_label_serialized_table",
-            "protocol": "zero_label_serialized_table",
-            "input_interface": "serialized_table",
-            "parameter_updates": False,
-            "visible_label_count": 0,
-            "target_visibility": "private_evaluation_only",
-        }
-    )
-    return output
+def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "1.1",
+        "dataset_id": str(record["dataset_id"]),
+        "dataset_split": str(record["dataset_split"]),
+        "source": "openml",
+        "source_id": str(record["source_id"]),
+        "source_url": str(record["source_url"]),
+        "task_type": str(record["task_type"]),
+        "target_column": str(record["target_column"]),
+        "feature_columns": list(record.get("feature_columns") or []),
+        "target_transform": str(record.get("target_transform") or ""),
+        "excluded_feature_columns": list(
+            record.get("excluded_feature_columns") or []
+        ),
+        "source_adaptation_rationale": str(
+            record.get("source_adaptation_rationale") or ""
+        ),
+        "dataset_name": str(record.get("dataset_name") or record["dataset_id"]),
+        "n_rows": int(record["n_rows"]),
+        "n_features": int(record.get("n_features") or 0),
+        "n_classes": record.get("n_classes"),
+        "dedup_cluster_id": str(
+            record.get("dedup_cluster_id") or record["dataset_id"]
+        ),
+        "license_claim": str(record.get("license_claim") or ""),
+    }
 
 
-def _prediction_episode_record(record: dict[str, Any]) -> dict[str, Any]:
-    output = {key: value for key, value in record.items() if key != "k"}
-    output.update(
-        {
-            "shots": int(record.get("shots", record.get("k"))),
-            "protocols": [
-                "zero_shot_icl",
-                "few_shot_icl",
-                "partially_labeled_serialized_table",
-            ],
-            "input_interfaces": ["row_examples", "serialized_table"],
-            "serialized_table_query_scopes": ["full_table", "episode"],
-            "parameter_updates": False,
-            "support_target_visibility": "protocol_dependent",
-            "query_target_visibility": "private_evaluation_only",
-            "zero_shot_icl_derivable": True,
-        }
-    )
-    return output
+def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    if not record.get("feature_columns"):
+        return None
+    return {
+        "schema_version": "1.1",
+        "task_id": f"{record['dataset_id']}:zero_label_serialized_table",
+        "dataset_id": str(record["dataset_id"]),
+        "task_type": str(record["task_type"]),
+        "target_column": str(record["target_column"]),
+        "primary_metrics": list(record["primary_metrics"]),
+        "protocol": "zero_label_serialized_table",
+        "input_interface": "serialized_table",
+        "parameter_updates": False,
+        "target_visibility": "excluded_from_model_input",
+    }
+
+
+def _prediction_episode_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    if not record.get("feature_columns"):
+        return None
+    support = list(record["support_row_ids"])
+    query = list(record["query_row_ids"])
+    return {
+        "schema_version": "1.1",
+        "episode_id": str(record["episode_id"]),
+        "dataset_id": str(record["dataset_id"]),
+        "episode_split": str(record["episode_split"]),
+        "support_row_ids": support,
+        "query_row_ids": query,
+        "query_size": len(query),
+        "shots": int(record.get("shots", record.get("k"))),
+        "target_visibility": "excluded_from_model_input",
+    }
+
+
+def _grounding_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    eligible = list(record.get("eligible_columns") or [])
+    if not eligible:
+        return None
+    return {
+        "schema_version": "1.1",
+        "task_id": str(record["task_id"]),
+        "dataset_id": str(record["dataset_id"]),
+        "eligible_columns": eligible,
+        "excluded_identifier_columns": list(
+            record.get("excluded_identifier_columns") or []
+        ),
+        "sampler": str(record["sampler"]),
+        "sampler_seed": int(record["sampler_seed"]),
+        "max_cells": int(record["max_cells"]),
+        "text_views": list(record["text_views"]),
+    }
 
 
 def _reference_config(reference: Path, name: str) -> Path:
@@ -337,6 +422,72 @@ def _validate_catalog_bindings(
         raise ValueError("invalid catalog bindings:\n- " + "\n- ".join(errors))
 
 
+def _validate_public_catalog(catalog: Catalog) -> None:
+    selected = catalog.select(
+        Selection(
+            tasks=(
+                "zero_label_serialized_table",
+                "few_shot_icl",
+                "grounding",
+            )
+        )
+    )
+    datasets = {dataset.dataset_id: dataset for dataset in selected.datasets}
+    errors: list[str] = []
+
+    for dataset_id in sorted(selected.table_prediction_dataset_ids):
+        dataset = datasets[dataset_id]
+        if not dataset.feature_columns:
+            errors.append(f"prediction task {dataset_id!r} has no feature columns")
+        if dataset.target_column in dataset.feature_columns:
+            errors.append(f"prediction task {dataset_id!r} exposes its target")
+
+    for episode in selected.episodes:
+        dataset_id = str(episode["dataset_id"])
+        dataset = datasets.get(dataset_id)
+        if dataset is None:
+            errors.append(f"episode {episode['episode_id']!r} has no dataset")
+            continue
+        if dataset_id not in selected.table_prediction_dataset_ids:
+            errors.append(
+                f"episode {episode['episode_id']!r} has no prediction task"
+            )
+        support = tuple(str(value) for value in episode["support_row_ids"])
+        query = tuple(str(value) for value in episode["query_row_ids"])
+        shots = int(episode["shots"])
+        if len(support) != shots:
+            errors.append(f"episode {episode['episode_id']!r} has the wrong shot count")
+        if len(query) != int(episode["query_size"]):
+            errors.append(f"episode {episode['episode_id']!r} has the wrong query size")
+        if not query:
+            errors.append(f"episode {episode['episode_id']!r} has no query rows")
+        if set(support) & set(query):
+            errors.append(f"episode {episode['episode_id']!r} overlaps support and query")
+        try:
+            row_ids = [int(value) for value in (*support, *query)]
+        except ValueError:
+            errors.append(f"episode {episode['episode_id']!r} has non-integer row IDs")
+            continue
+        if row_ids and (min(row_ids) < 0 or max(row_ids) >= dataset.n_rows):
+            errors.append(f"episode {episode['episode_id']!r} has invalid row IDs")
+
+    for task in selected.grounding_tasks:
+        dataset_id = str(task["dataset_id"])
+        dataset = datasets[dataset_id]
+        eligible = tuple(str(value) for value in task["eligible_columns"])
+        if not eligible:
+            errors.append(f"grounding task {dataset_id!r} has no eligible columns")
+        if dataset.target_column in eligible:
+            errors.append(f"grounding task {dataset_id!r} exposes its target")
+        if unknown := set(eligible) - set(dataset.feature_columns):
+            errors.append(
+                f"grounding task {dataset_id!r} has unknown columns: {sorted(unknown)}"
+            )
+
+    if errors:
+        raise ValueError("invalid public catalog:\n- " + "\n- ".join(errors))
+
+
 def _validate_value_free(plans: tuple[EvaluationPlan, ...]) -> None:
     forbidden_keys = {
         "answer",
@@ -394,40 +545,11 @@ def _load_release_plans(root: Path) -> tuple[EvaluationPlan, ...]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
-
-def _summary_markdown(summary: dict[str, Any]) -> str:
-    lines = [
-        "# Hugging Face Release Audit",
-        "",
-        f"- passed: `{summary['passed']}`",
-        f"- reference: `{summary['reference_id']}`",
-        f"- task plans executed: `{summary['task_plans_executed']}`",
-        "- source tables redistributed: `False`",
-        "- rendered questions stored: `False`",
-        "- gold answers stored: `False`",
-        "",
-        "## Task Counts",
-        "",
-    ]
-    for task, counts in summary["task_counts"].items():
-        lines.append(f"### {task}")
-        lines.append("")
-        for split, count in counts.items():
-            datasets = summary["dataset_counts"][task][split]
-            lines.append(f"- {split}: `{count}` items across `{datasets}` datasets")
-        lines.append("")
-    lines.extend(["## Eligibility Skips", ""])
-    if summary["eligibility_skips"]:
-        for reason, count in summary["eligibility_skips"].items():
-            lines.append(f"- {reason}: `{count}`")
-    else:
-        lines.append("- none")
-    return "\n".join(lines) + "\n"
 
 
 __all__ = [
