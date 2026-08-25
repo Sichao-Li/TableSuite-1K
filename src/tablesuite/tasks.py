@@ -20,6 +20,12 @@ from tablesuite.evaluation.contracts import (
 )
 from tablesuite.evaluation.executor import PlanExecutor
 from tablesuite.source import ParquetSource
+from tablesuite.task_records import (
+    legacy_reference_id,
+    load_huggingface_task_records,
+    read_task_records,
+    task_registry,
+)
 from tablesuite.types import TableSlice
 
 TaskName = Literal[
@@ -258,21 +264,32 @@ def load_task(
     reference_path = Path(reference)
     if reference_path.is_dir():
         catalog = Catalog.from_path(reference_path)
-        registry = _resolve_local_registry(reference_path, name, split)
+        registry = _resolve_local_registry(
+            reference_path,
+            name,
+            split,
+            catalog,
+        )
     else:
-        registry = PlanRegistry.from_huggingface(
+        records = load_huggingface_task_records(
             str(reference),
             name=name,
             split=split,
             revision=revision,
         )
-        if not registry.plans:
+        if not records:
             raise ValueError(f"HF task {name!r}/{split!r} contains no examples")
         catalog = Catalog.from_huggingface(
             str(reference),
             revision=revision,
             include_task_manifests=False,
-            reference_id=registry.plans[0].reference_id,
+            reference_id=legacy_reference_id(records),
+        )
+        registry = task_registry(
+            records,
+            catalog=catalog,
+            name=name,
+            split=split,
         )
     requested = {str(value) for value in dataset_ids}
     if requested:
@@ -303,6 +320,7 @@ def _resolve_local_registry(
     reference: Path,
     name: TaskName,
     split: EvaluationSplit,
+    catalog: Catalog,
 ) -> PlanRegistry:
     root = reference / "tasks" / name
     candidates = (
@@ -312,7 +330,12 @@ def _resolve_local_registry(
     )
     for candidate in candidates:
         if candidate.is_file() or candidate.is_dir():
-            return PlanRegistry.load(candidate)
+            return task_registry(
+                read_task_records(candidate),
+                catalog=catalog,
+                name=name,
+                split=split,
+            )
     raise FileNotFoundError(
         f"no local task split for {name!r}/{split!r} under {root}"
     )

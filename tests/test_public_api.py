@@ -20,7 +20,7 @@ from tablesuite.rendering import (
 
 
 def test_package_version_is_available() -> None:
-    assert __version__ == "1.2.1"
+    assert __version__ == "1.3.0"
 
 
 def test_catalog_selection_and_manifest(

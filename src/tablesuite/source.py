@@ -242,9 +242,9 @@ def _write_source_notices(path: Path, datasets: list[DatasetSpec]) -> None:
             "dataset_id": dataset.dataset_id,
             "dataset_name": dataset.dataset_name,
             "openml_data_id": dataset.source_id,
-            "source_url": dataset.source_url,
-            "license_claim": dataset.license_claim,
-            "source_license_url": dataset.source_license_url,
+            "openml_url": dataset.source_url,
+            "openml_license_claim": dataset.license_claim,
+            "openml_license_url": dataset.source_license_url,
         }
     payload = {
         "schema_version": "1.0",

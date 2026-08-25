@@ -40,6 +40,9 @@ def test_openml_materialization_is_bounded_and_records_source_notices(
     assert pq.read_table(destination / "1.parquet").num_rows == 8
     notices = json.loads((destination / "SOURCE_NOTICES.json").read_text())
     assert notices["datasets"][0]["openml_data_id"] == "1"
+    assert notices["datasets"][0]["openml_url"] == "https://www.openml.org/d/1"
+    assert "source_url" not in notices["datasets"][0]
+    assert "license_claim" not in notices["datasets"][0]
 
     reused = materialize_openml_sources(
         [dataset],

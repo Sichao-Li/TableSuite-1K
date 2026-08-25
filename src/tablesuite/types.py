@@ -54,11 +54,14 @@ class DatasetSpec:
     def from_record(cls, record: dict[str, Any]) -> DatasetSpec:
         """Create a typed dataset specification from a catalog record."""
 
+        source_id = record.get("openml_data_id", record.get("source_id"))
+        if source_id is None:
+            raise KeyError("dataset record has no OpenML data ID")
         return cls(
             dataset_id=str(record["dataset_id"]),
             dataset_split=str(record["dataset_split"]),
-            source_id=str(record["source_id"]),
-            source_url=str(record.get("source_url", "")),
+            source_id=str(source_id),
+            source_url=str(record.get("openml_url", record.get("source_url", ""))),
             task_type=str(record["task_type"]),
             target_column=str(record["target_column"]),
             feature_columns=tuple(str(value) for value in record["feature_columns"]),
@@ -69,8 +72,13 @@ class DatasetSpec:
                 str(value) for value in record.get("excluded_feature_columns", [])
             ),
             dataset_name=str(record.get("dataset_name") or ""),
-            license_claim=str(record.get("license_claim") or ""),
-            source_license_url=str(record.get("source_license_url") or ""),
+            license_claim=str(
+                record.get("openml_license_claim", record.get("license_claim")) or ""
+            ),
+            source_license_url=str(
+                record.get("openml_license_url", record.get("source_license_url"))
+                or ""
+            ),
         )
 
 

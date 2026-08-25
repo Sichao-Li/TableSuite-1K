@@ -10,8 +10,8 @@ values, labels, rendered facts, predictions, embeddings, or model weights.
 OpenML remains the source-data distributor. A user who materializes a table is
 responsible for its upstream terms. TableSuite-1K's code or benchmark-metadata
 license does not relicense any referenced table. An OpenML metadata value such as
-`Public`, `CC BY 4.0`, or `ODbL` is recorded as a source claim and is not itself
-a legal conclusion by this project.
+`Public`, `CC BY 4.0`, or `ODbL` is recorded as `openml_license_claim` and is
+not itself a legal conclusion by this project.
 
 TableSuite-1K is an independent research benchmark and is not affiliated with
 or endorsed by OpenML.

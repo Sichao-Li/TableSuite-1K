@@ -80,9 +80,9 @@ rendered answers, model outputs, or checkpoints.
 | Configuration | Records | Unit |
 | --- | ---: | --- |
 | `datasets` | 1,000 | source, schema, target, split, and license metadata |
-| `table_prediction_tasks` | 998 | executable zero-label prediction contracts |
+| `table_prediction_tasks` | 998 | prediction-eligible datasets and metrics |
 | `prediction_episodes` | 35,472 | frozen 4/16/32-shot support/query references |
-| `grounding_tasks` | 989 | eligible columns for custom grounding |
+| `grounding_tasks` | 989 | eligible columns and sampling caps |
 | `cell_grounding` | 50,012 | official exact-cell evaluation plans |
 | `table_question_answering` | 22,448 | official programmatic table-QA plans |
 
@@ -96,7 +96,7 @@ Install the matching companion package:
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.1'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.3.0'
 ```
 
 Materialize one explicitly selected source table from OpenML:
@@ -104,7 +104,7 @@ Materialize one explicitly selected source table from OpenML:
 ```bash
 tablesuite fetch-openml \
   --reference 'Lester1996/TableSuite-1K' \
-  --revision v1.2.1 \
+  --revision v1.3.0 \
   --output openml-parquet \
   --dataset-id openml_45069 \
   --accept-source-terms
@@ -120,7 +120,7 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v1.2.1",
+    revision="v1.3.0",
     dataset_ids=("openml_45069",),
 )
 
@@ -164,9 +164,13 @@ plans = load_dataset(
     "Lester1996/TableSuite-1K",
     "cell_grounding",
     split="dataset_test",
-    revision="v1.2.1",
+    revision="v1.3.0",
 )
-print(plans[0]["item_id"])
+print({
+    "dataset": plans[0]["dataset_id"],
+    "row": plans[0]["source_row_id"],
+    "column": plans[0]["answer_column"],
+})
 ```
 
 These rows are value-free plans. Use the companion package when you need
@@ -184,7 +188,7 @@ Report these transfer axes separately.
 ## Source and Licensing Boundary
 
 OpenML remains the source-table distributor. Every source retains its upstream
-terms; `license_claim` is provenance metadata, not a license granted by
+terms; `openml_license_claim` is provenance metadata, not a license granted by
 TableSuite-1K. The repository-level `other` designation reflects heterogeneous
 source terms. TableSuite-1K is independent from and not endorsed by OpenML.
 

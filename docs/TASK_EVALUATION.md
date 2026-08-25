@@ -1,30 +1,24 @@
 # Official Task Evaluation
 
-Status: **task-plan schema 1.1, frozen for TableSuite-1K v1.2.1**.
+Status: **public task-record schema 1.0, released with TableSuite-1K v1.3.0**.
 
-Users interact with ordinary Hugging Face configurations and splits. They do
-not construct evaluation runtimes or manipulate semantic plans.
+Users load ordinary Hugging Face configurations. The companion package joins
+each compact task row to `datasets`, resolves the referenced OpenML slice,
+renders the model input, and computes gold programmatically.
 
-## Hugging Face Configurations
+## Tasks
 
-| Configuration | Capability | Answer source |
+| Configuration | Model input | Gold source |
 | --- | --- | --- |
-| `cell_grounding` | retrieve a cell from a contextual source row | source table |
-| `table_question_answering` | aggregate, compare, filter, and look up | deterministic table execution |
+| `cell_grounding` | one contextual row plus lookup question | exact source cell |
+| `table_question_answering` | 4/8/16-row subtable plus typed question | deterministic table operation |
 
-Each configuration can expose `train`, `validation`, `episode_test`,
-`dataset_test`, `template_test`, and `composition_test` as applicable. The Hub
-rows contain stable item IDs, source references, typed operations, rendering
-policy, and scoring policy. They contain no copied source values, rendered
-questions, gold answers, model responses, or experiment results.
+Cell grounding uses 4-8 eligible non-target columns. Table QA uses 3-8
+columns and supports aggregate, argmax lookup, and filtered argmax lookup.
+Release authoring rejects missing operands, non-finite numeric values, empty
+filters, and tied maxima.
 
-Cell grounding uses a one-row slice with 4–8 eligible non-target columns and
-an explicit lookup column. Table QA uses 4/8/16-row subtables with 3–8 columns.
-Its typed operations are aggregate, argmax lookup, and filtered argmax lookup.
-Missing operands, non-finite numeric values, empty filters, and tied maxima are
-rejected during release authoring.
-
-Inspect one split using the standard Datasets API:
+## Inspect Specifications
 
 ```python
 from datasets import load_dataset
@@ -33,14 +27,17 @@ specifications = load_dataset(
     "Lester1996/TableSuite-1K",
     "table_question_answering",
     split="dataset_test",
+    revision="v1.3.0",
 )
-print(specifications[0]["item_id"])
+print(specifications.column_names)
+print(specifications[0]["operation"])
 ```
 
-## Run A Task
+The rows contain source references and scoring fields, but no copied values,
+rendered questions, answers, responses, or experiment results. See
+[REFERENCE_FORMAT.md](REFERENCE_FORMAT.md) for their exact columns.
 
-The companion package resolves the external OpenML rows, deterministically
-renders the question, and keeps the computed answer away from the model input.
+## Run And Score
 
 ```python
 from tablesuite import load_task
@@ -50,7 +47,7 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v1.2.1",
+    revision="v1.3.0",
     dataset_ids=("openml_45069",),
 )
 
@@ -60,9 +57,9 @@ score = task.score(example.id, prediction)
 ```
 
 `TaskExample` is input-only. It exposes the prompt, question, rendered table,
-task/split metadata, and exact source slice, but not the answer.
+metadata, and exact source slice, but not the answer.
 
-For a complete run, submit answers keyed by stable item ID:
+Evaluate a complete split with responses keyed by stable item ID:
 
 ```python
 predictions = {example.id: model(example.prompt) for example in task}
@@ -70,47 +67,31 @@ report = task.evaluate(predictions)
 print(report.to_dict())
 ```
 
-The report includes micro accuracy, dataset-macro accuracy, dedup-cluster-macro
-accuracy, parse failures, and accuracy by semantic operation. Missing examples
-are rejected by default. `allow_partial=True` is reserved for diagnostic smoke
-tests.
+Reports include micro accuracy, dataset-macro accuracy,
+dedup-cluster-macro accuracy, parse-failure rate, and accuracy by operation.
+Missing responses fail by default; `allow_partial=True` is diagnostic only.
 
-The CLI follows the same vocabulary:
+## Evaluation Splits
 
-```bash
-tablesuite task \
-  --reference 'Lester1996/TableSuite-1K' \
-  --source openml-parquet \
-  --name table_question_answering \
-  --split dataset_test \
-  --dataset-id openml_45069 \
-  --index 0
-```
+| Split | Held-out factor |
+| --- | --- |
+| `validation` | validation dataset clusters |
+| `episode_test` | source rows within training dataset clusters |
+| `dataset_test` | dataset clusters |
+| `template_test` | source rows and question templates |
+| `composition_test` | filter-then-argmax operation composition |
 
-## Source Boundary
+Dataset and template transfer must be reported separately. Exact source cells
+do not cross evaluation splits, and only `template_test` uses held-out wording.
 
-OpenML remains the source-data distributor. The HF task specifications are
-value-free, so users materialize only the source tables needed by their chosen
-configuration and split.
+## Reproducibility Boundary
 
-The first release does not publish model prediction packets or an integrated
-reasoning task. Inference-only prediction interfaces remain represented by
-`table_prediction_tasks` and `prediction_episodes`, without treating one external
-predictor's outputs as
-benchmark ground truth.
+Per-item public rows freeze the source slice, semantic operation, scoring
+tolerances, template split, and render seed. The tagged package fixes the
+operation executor, renderer, English language, Markdown view, missing-value
+policy, and tie policy. Release validation reconstructs every internal plan,
+checks catalog bindings and leakage, and executes every operation against the
+source before upload.
 
-## Reproducibility Contract
-
-Internally, every HF task row freezes the source slice, typed operation,
-template family, held-out-template policy, rendering seed, executor version,
-and scorer. Loading validates source identity, dataset partition, and
-deduplication cluster. The release-authoring audit additionally rejects
-cross-split source and deduplication leakage before upload.
-
-The split contract isolates dataset, row/episode, wording, and operation
-composition transfer. Exact source cells cannot occur across evaluation
-splits, and only `template_test` uses held-out question templates.
-
-Benchmark maintainers can import the lower-level authoring contracts from
-`tablesuite.evaluation`. Those classes are intentionally absent from the
-top-level user API; official users should call `load_task`.
+OpenML remains the source-data distributor. Prediction packets and integrated
+reasoning outputs are not included in this release.

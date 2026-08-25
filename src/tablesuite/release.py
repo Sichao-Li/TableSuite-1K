@@ -25,11 +25,19 @@ from tablesuite.evaluation import (
     audit_plans,
 )
 from tablesuite.source import ParquetSource
+from tablesuite.task_records import (
+    TASK_RECORD_SCHEMA_VERSION,
+    public_task_record,
+    read_task_records,
+    task_arrow_schema,
+    task_registry,
+)
 from tablesuite.types import Selection
 
 TASK_CONFIGS = ("cell_grounding", "table_question_answering")
 RELEASE_CONFIGS = (*CONFIGS, *TASK_CONFIGS)
-RELEASE_VERSION = "1.2.1"
+RELEASE_VERSION = "1.3.0"
+REFERENCE_ID = "tablesuite-1k:1.3"
 
 
 def build_huggingface_release(
@@ -69,14 +77,20 @@ def build_huggingface_release(
         executed = _validate_execution(catalog, source, generated.plans)
 
         catalog_counts = _write_public_catalog(reference_path, staging)
-        _validate_public_catalog(Catalog.from_path(staging))
+        public_catalog = Catalog.from_path(staging)
+        _validate_public_catalog(public_catalog)
         shutil.copy2(card_path, staging / "README.md")
         _write_task_configs(staging, generated.plans, policy.shard_size)
+        public_plans = _load_release_plans(staging, public_catalog)
+        _validate_task_roundtrip(generated.plans, public_plans)
+        public_audit = audit_plans(public_plans)
+        public_audit.require_passed()
+        _validate_catalog_bindings(public_catalog, public_plans)
         summary = {
-            "schema_version": "1.2",
+            "schema_version": "1.3",
             "release_version": RELEASE_VERSION,
             "release_kind": "value_free_huggingface_benchmark",
-            "reference_id": catalog.reference_id,
+            "reference_id": public_catalog.reference_id,
             "passed": True,
             "configs": list(RELEASE_CONFIGS),
             "catalog_counts": catalog_counts,
@@ -95,7 +109,6 @@ def build_huggingface_release(
                 "errors": list(audit.errors),
             },
         }
-        _write_json(staging / "metadata" / "release_audit.json", summary)
         staging.replace(destination)
         return summary
     except Exception:
@@ -121,10 +134,10 @@ def validate_huggingface_release(
         raise ValueError(f"release is missing configurations: {missing}")
     if not (root / "README.md").is_file():
         raise ValueError("release is missing its Hugging Face dataset card")
-    plans = _load_release_plans(root)
+    catalog = Catalog.from_path(root)
+    plans = _load_release_plans(root, catalog)
     audit = audit_plans(plans)
     audit.require_passed()
-    catalog = Catalog.from_path(root)
     _validate_public_catalog(catalog)
     _validate_catalog_bindings(catalog, plans)
     _validate_value_free(plans)
@@ -180,33 +193,43 @@ def _write_public_catalog(
             _reference_config(reference, "datasets"),
             destination / "datasets",
             _dataset_record,
+            schema=_catalog_arrow_schema("datasets"),
         ),
         "table_prediction_tasks": _rewrite_config(
             _reference_config(reference, "table_prediction_tasks"),
             destination / "table_prediction_tasks",
             _table_prediction_record,
+            schema=_catalog_arrow_schema("table_prediction_tasks"),
         ),
         "prediction_episodes": _rewrite_config(
             _reference_config(reference, "prediction_episodes"),
             destination / "prediction_episodes",
             _prediction_episode_record,
+            schema=_catalog_arrow_schema("prediction_episodes"),
         ),
         "grounding_tasks": _rewrite_config(
             _reference_config(reference, "grounding_tasks"),
             destination / "grounding_tasks",
             _grounding_record,
+            schema=_catalog_arrow_schema("grounding_tasks"),
         ),
     }
     summary = reference / "reference_summary.json"
     if not summary.is_file():
         raise FileNotFoundError(summary)
     source_summary = json.loads(summary.read_text(encoding="utf-8"))
+    if not isinstance(source_summary, dict):
+        raise ValueError("reference summary must be a JSON object")
     reference_summary = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "release_version": RELEASE_VERSION,
-        "reference_id": str(source_summary["reference_id"]),
+        "reference_id": REFERENCE_ID,
         "source_provider": "openml",
         "contains_source_values": False,
+        "record_schemas": {
+            "catalog": "1.0",
+            "official_tasks": TASK_RECORD_SCHEMA_VERSION,
+        },
         "configs": summaries,
     }
     _write_json(destination / summary.name, reference_summary)
@@ -217,6 +240,8 @@ def _rewrite_config(
     source: Path,
     destination: Path,
     transform: Callable[[dict[str, Any]], dict[str, Any] | None],
+    *,
+    schema: Any,
 ) -> dict[str, Any]:
     try:
         import pyarrow as pa
@@ -238,7 +263,11 @@ def _rewrite_config(
         if not rows:
             continue
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(pa.Table.from_pylist(rows), output_file, compression="zstd")
+        pq.write_table(
+            pa.Table.from_pylist(rows, schema=schema),
+            output_file,
+            compression="zstd",
+        )
         split = output_file.parent.name
         split_summary = split_summaries.setdefault(
             split,
@@ -256,30 +285,35 @@ def _rewrite_config(
 
 def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
-        "schema_version": "1.1",
         "dataset_id": str(record["dataset_id"]),
         "dataset_split": str(record["dataset_split"]),
-        "source": "openml",
-        "source_id": str(record["source_id"]),
-        "source_url": str(record["source_url"]),
+        "openml_data_id": str(record["source_id"]),
+        "openml_url": str(record["source_url"]),
+        "dataset_name": str(record.get("dataset_name") or record["dataset_id"]),
         "task_type": str(record["task_type"]),
         "target_column": str(record["target_column"]),
-        "feature_columns": list(record.get("feature_columns") or []),
-        "target_transform": str(record.get("target_transform") or ""),
-        "excluded_feature_columns": list(
-            record.get("excluded_feature_columns") or []
-        ),
+        "feature_columns": [
+            str(value) for value in record.get("feature_columns") or []
+        ],
+        "target_transform": str(record.get("target_transform") or "none"),
+        "excluded_feature_columns": [
+            str(value)
+            for value in record.get("excluded_feature_columns") or []
+        ],
         "source_adaptation_rationale": str(
             record.get("source_adaptation_rationale") or ""
         ),
-        "dataset_name": str(record.get("dataset_name") or record["dataset_id"]),
         "n_rows": int(record["n_rows"]),
         "n_features": int(record.get("n_features") or 0),
-        "n_classes": record.get("n_classes"),
+        "n_classes": (
+            int(record["n_classes"])
+            if record.get("n_classes") is not None
+            else None
+        ),
         "dedup_cluster_id": str(
             record.get("dedup_cluster_id") or record["dataset_id"]
         ),
-        "license_claim": str(record.get("license_claim") or ""),
+        "openml_license_claim": str(record.get("license_claim") or ""),
     }
 
 
@@ -287,54 +321,104 @@ def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any] | None:
     if not record.get("feature_columns"):
         return None
     return {
-        "schema_version": "1.1",
-        "task_id": f"{record['dataset_id']}:zero_label_serialized_table",
         "dataset_id": str(record["dataset_id"]),
-        "task_type": str(record["task_type"]),
-        "target_column": str(record["target_column"]),
-        "primary_metrics": list(record["primary_metrics"]),
-        "protocol": "zero_label_serialized_table",
-        "input_interface": "serialized_table",
-        "parameter_updates": False,
-        "target_visibility": "excluded_from_model_input",
+        "primary_metrics": [str(value) for value in record["primary_metrics"]],
     }
 
 
 def _prediction_episode_record(record: dict[str, Any]) -> dict[str, Any] | None:
     if not record.get("feature_columns"):
         return None
-    support = list(record["support_row_ids"])
-    query = list(record["query_row_ids"])
+    support = [str(value) for value in record["support_row_ids"]]
+    query = [str(value) for value in record["query_row_ids"]]
     return {
-        "schema_version": "1.1",
         "episode_id": str(record["episode_id"]),
         "dataset_id": str(record["dataset_id"]),
         "episode_split": str(record["episode_split"]),
         "support_row_ids": support,
         "query_row_ids": query,
-        "query_size": len(query),
         "shots": int(record.get("shots", record.get("k"))),
-        "target_visibility": "excluded_from_model_input",
     }
 
 
 def _grounding_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    eligible = list(record.get("eligible_columns") or [])
+    eligible = [str(value) for value in record.get("eligible_columns") or []]
     if not eligible:
         return None
     return {
-        "schema_version": "1.1",
-        "task_id": str(record["task_id"]),
         "dataset_id": str(record["dataset_id"]),
         "eligible_columns": eligible,
-        "excluded_identifier_columns": list(
-            record.get("excluded_identifier_columns") or []
-        ),
-        "sampler": str(record["sampler"]),
-        "sampler_seed": int(record["sampler_seed"]),
+        "excluded_identifier_columns": [
+            str(value)
+            for value in record.get("excluded_identifier_columns") or []
+        ],
         "max_cells": int(record["max_cells"]),
-        "text_views": list(record["text_views"]),
     }
+
+
+def _catalog_arrow_schema(name: str) -> Any:
+    try:
+        import pyarrow as pa
+    except ImportError as error:
+        raise RuntimeError("install tablesuite[local] to author a release") from error
+    schemas = {
+        "datasets": pa.schema(
+            [
+                pa.field("dataset_id", pa.string(), nullable=False),
+                pa.field("dataset_split", pa.string(), nullable=False),
+                pa.field("openml_data_id", pa.string(), nullable=False),
+                pa.field("openml_url", pa.string(), nullable=False),
+                pa.field("dataset_name", pa.string(), nullable=False),
+                pa.field("task_type", pa.string(), nullable=False),
+                pa.field("target_column", pa.string(), nullable=False),
+                pa.field("feature_columns", pa.list_(pa.string()), nullable=False),
+                pa.field("target_transform", pa.string(), nullable=False),
+                pa.field(
+                    "excluded_feature_columns",
+                    pa.list_(pa.string()),
+                    nullable=False,
+                ),
+                pa.field("source_adaptation_rationale", pa.string(), nullable=False),
+                pa.field("n_rows", pa.int64(), nullable=False),
+                pa.field("n_features", pa.int64(), nullable=False),
+                pa.field("n_classes", pa.int64()),
+                pa.field("dedup_cluster_id", pa.string(), nullable=False),
+                pa.field("openml_license_claim", pa.string(), nullable=False),
+            ]
+        ),
+        "table_prediction_tasks": pa.schema(
+            [
+                pa.field("dataset_id", pa.string(), nullable=False),
+                pa.field("primary_metrics", pa.list_(pa.string()), nullable=False),
+            ]
+        ),
+        "prediction_episodes": pa.schema(
+            [
+                pa.field("episode_id", pa.string(), nullable=False),
+                pa.field("dataset_id", pa.string(), nullable=False),
+                pa.field("episode_split", pa.string(), nullable=False),
+                pa.field("support_row_ids", pa.list_(pa.string()), nullable=False),
+                pa.field("query_row_ids", pa.list_(pa.string()), nullable=False),
+                pa.field("shots", pa.int64(), nullable=False),
+            ]
+        ),
+        "grounding_tasks": pa.schema(
+            [
+                pa.field("dataset_id", pa.string(), nullable=False),
+                pa.field("eligible_columns", pa.list_(pa.string()), nullable=False),
+                pa.field(
+                    "excluded_identifier_columns",
+                    pa.list_(pa.string()),
+                    nullable=False,
+                ),
+                pa.field("max_cells", pa.int64(), nullable=False),
+            ]
+        ),
+    }
+    try:
+        return schemas[name]
+    except KeyError as error:
+        raise ValueError(f"unknown public catalog configuration: {name!r}") from error
 
 
 def _reference_config(reference: Path, name: str) -> Path:
@@ -364,9 +448,12 @@ def _write_task_configs(
         destination.mkdir(parents=True, exist_ok=True)
         ordered = sorted(split_plans, key=lambda plan: plan.item_id)
         for shard_index, start in enumerate(range(0, len(ordered), shard_size)):
-            records = [plan.to_record() for plan in ordered[start : start + shard_size]]
+            records = [
+                public_task_record(plan)
+                for plan in ordered[start : start + shard_size]
+            ]
             pq.write_table(
-                pa.Table.from_pylist(records),
+                pa.Table.from_pylist(records, schema=task_arrow_schema(task)),
                 destination / f"part-{shard_index:05d}.parquet",
                 compression="zstd",
             )
@@ -457,8 +544,6 @@ def _validate_public_catalog(catalog: Catalog) -> None:
         shots = int(episode["shots"])
         if len(support) != shots:
             errors.append(f"episode {episode['episode_id']!r} has the wrong shot count")
-        if len(query) != int(episode["query_size"]):
-            errors.append(f"episode {episode['episode_id']!r} has the wrong query size")
         if not query:
             errors.append(f"episode {episode['episode_id']!r} has no query rows")
         if set(support) & set(query):
@@ -533,15 +618,41 @@ def _require_release_coverage(task_counts: dict[str, dict[str, int]]) -> None:
         raise ValueError(f"release authoring produced empty official splits: {missing}")
 
 
-def _load_release_plans(root: Path) -> tuple[EvaluationPlan, ...]:
+def _load_release_plans(
+    root: Path,
+    catalog: Catalog,
+) -> tuple[EvaluationPlan, ...]:
     plans: list[EvaluationPlan] = []
     for task in TASK_CONFIGS:
         task_root = root / "tasks" / task
         if not task_root.is_dir():
             raise ValueError(f"release is missing task files for {task!r}")
         for split in sorted(path for path in task_root.iterdir() if path.is_dir()):
-            plans.extend(PlanRegistry.load(split).plans)
+            plans.extend(
+                task_registry(
+                    read_task_records(split),
+                    catalog=catalog,
+                    name=task,
+                    split=split.name,
+                ).plans
+            )
     return tuple(sorted(plans, key=lambda plan: plan.item_id))
+
+
+def _validate_task_roundtrip(
+    expected: tuple[EvaluationPlan, ...],
+    restored: tuple[EvaluationPlan, ...],
+) -> None:
+    expected_records = sorted(
+        (public_task_record(plan) for plan in expected),
+        key=lambda record: record["item_id"],
+    )
+    restored_records = sorted(
+        (public_task_record(plan) for plan in restored),
+        key=lambda record: record["item_id"],
+    )
+    if expected_records != restored_records:
+        raise ValueError("public task records failed their semantic round trip")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -39,7 +39,7 @@ from tablesuite.types import (
 try:
     __version__ = _distribution_version("tablesuite")
 except _PackageNotFoundError:
-    __version__ = "0+unknown"
+    __version__ = "1.3.0"
 
 __all__ = [
     "Benchmark",

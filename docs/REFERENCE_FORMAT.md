@@ -1,51 +1,153 @@
 # Hugging Face Reference Format
 
-The release contains six value-free configurations. Four form a compact
-source/task catalog:
+TableSuite-1K v1.3.0 contains six value-free Parquet configurations. The
+`datasets` configuration is the canonical metadata table; every other
+configuration joins to it by `dataset_id`.
 
-| Configuration | Records | Purpose |
-| --- | ---: | --- |
-| `datasets` | 1,000 | OpenML identity, schema, target, source adaptation, split, and license claim |
-| `table_prediction_tasks` | 998 | Zero-label prediction protocol and metrics |
-| `prediction_episodes` | 35,472 | Frozen support/query references and shot count |
-| `grounding_tasks` | 989 | Eligible columns and deterministic sampler contract |
+No configuration contains feature values, targets, support labels, rendered
+questions, gold answers, model outputs, embeddings, or checkpoints.
 
-The catalog intentionally excludes feature values, targets, support labels,
-query labels, rendered cell values, model outputs, and checkpoints.
+## Catalog Configurations
 
-`datasets` is the canonical metadata configuration. The other three catalog
-configurations store only task-specific fields and join to it by `dataset_id`.
-This avoids repeating source URL, schema, target, and license metadata in every
-episode.
+### `datasets`
 
-Published `table_prediction_tasks` records declare `protocol =
-zero_label_serialized_table`, `input_interface = serialized_table`, and
-`parameter_updates = false`. Published `prediction_episodes` records freeze
-support/query references and `shots` for `few_shot_icl` and
-`partially_labeled_serialized_table`. A `zero_shot_icl` request is derived by
-removing support labels while retaining the frozen query references.
+One row per referenced OpenML dataset:
 
-Two additional configurations contain official evaluation items:
+```text
+dataset_id
+dataset_split
+openml_data_id
+openml_url
+dataset_name
+task_type
+target_column
+feature_columns
+target_transform
+excluded_feature_columns
+source_adaptation_rationale
+n_rows
+n_features
+n_classes
+dedup_cluster_id
+openml_license_claim
+```
 
-| Configuration | Records | Purpose |
-| --- | ---: | --- |
-| `cell_grounding` | 50,012 | exact fact grounding |
-| `table_question_answering` | 22,448 | programmatic table QA |
+`dataset_split` and `dedup_cluster_id` define the duplicate-aware transfer
+partition. `openml_license_claim` records upstream metadata and is not a
+license granted by TableSuite-1K.
 
-Each task configuration is divided into applicable evaluation splits such as
-`train`, `validation`, `episode_test`, `dataset_test`, `template_test`, and
-`composition_test`. A row contains an `item_id`, source references, a typed
-operation, deterministic rendering policy, and scoring policy. It never stores
-the rendered question or answer.
+### `table_prediction_tasks`
 
-Prediction packets and integrated model outputs are not part of the first
-public Hugging Face release. The `table_prediction_tasks` and
-`prediction_episodes` configurations define inference-only prediction
-interfaces without bundling any predictor's outputs or authorizing parameter
-updates.
+One row per prediction-eligible dataset:
 
-Each dataset record also carries its OpenML URL and upstream license claim.
-`license_claim` is provenance metadata, not a license granted by TableSuite-1K.
+```text
+dataset_id
+primary_metrics
+```
+
+The configuration name defines the zero-label serialized-table protocol. The
+target, task type, features, and source identity come from `datasets`.
+
+### `prediction_episodes`
+
+One frozen support/query episode per row:
+
+```text
+episode_id
+dataset_id
+episode_split
+support_row_ids
+query_row_ids
+shots
+```
+
+These records support few-shot ICL and partially labelled serialized-table
+prediction. Zero-shot ICL reuses the query references without exposing support
+labels.
+
+### `grounding_tasks`
+
+One row per grounding-eligible dataset:
+
+```text
+dataset_id
+eligible_columns
+excluded_identifier_columns
+max_cells
+```
+
+The package derives deterministic source-cell facts from these fields. The
+registered target is never an eligible grounding column.
+
+## Official Evaluation Configurations
+
+The official tasks freeze semantic operations and source references. Wording
+and gold are generated from the referenced source table only when an item is
+loaded.
+
+### `cell_grounding`
+
+```text
+item_id
+dataset_id
+evaluation_split
+render_seed
+source_row_id
+context_columns
+answer_column
+answer_type
+absolute_tolerance
+relative_tolerance
+template_split
+```
+
+Each item shows one contextual row and asks for the exact value at
+`source_row_id` and `answer_column`.
+
+### `table_question_answering`
+
+```text
+item_id
+dataset_id
+evaluation_split
+render_seed
+source_row_ids
+source_columns
+operation
+operation_arguments
+answer_type
+absolute_tolerance
+relative_tolerance
+template_split
+```
+
+`operation` is one of `aggregate`, `argmax_lookup`, or
+`filtered_argmax_lookup`. `operation_arguments` is a named nullable struct:
+
+```text
+aggregation
+column
+filter_column
+filter_value_row_id
+maximize_column
+return_column
+```
+
+Only fields required by the selected operation are populated. For a filtered
+operation, `filter_value_row_id` references a source row; the filter value
+itself is not copied into the public plan.
+
+## Why The Rows Are Compact
+
+Earlier releases embedded internal plan objects in every task row. v1.3.0
+keeps only item-specific public fields. Dataset partition, deduplication
+cluster, OpenML identity, and schema are joined from `datasets`; operation and
+renderer versions are fixed by the tagged companion package. `render_seed` is
+retained because it is an item-authoring choice and affects deterministic
+wording.
+
+`tablesuite.load_task` accepts both the compact v1.3.0 rows and legacy v1.2.1
+nested rows. Users do not need to reconstruct internal plans themselves.
 
 ## Source Resolution
 
@@ -55,46 +157,21 @@ Local source files use:
 <source-root>/<openml_data_id>.parquet
 ```
 
-The resolver checks the expected row count, feature columns, and target column.
-Declared source adaptations are applied deterministically. File checksums are
-not part of the source contract.
+The resolver checks row count, feature columns, and target column, then applies
+declared source adaptations deterministically. `tablesuite fetch-openml`
+materializes only an explicit bounded selection and writes local
+`SOURCE_NOTICES.json`; source rows are never added to the reference release.
 
-`tablesuite fetch-openml` can create this layout for an explicit bounded
-selection. It contacts OpenML directly and writes `SOURCE_NOTICES.json` locally;
-downloaded source rows are never added to the reference repository.
+## Rows And Subtables
 
-## Selection
+`TableSlice(dataset_id, row_ids, columns)` is the package's source-addressing
+primitive. One row ID represents a row; multiple row IDs and columns represent
+a subtable. A collection of slices may span datasets, but one slice never
+merges incompatible schemas.
 
-`Catalog.select` first resolves dataset and candidate-episode filters.
-`Benchmark.select` then checks episode eligibility against source targets and
-writes only executable episode IDs to `SelectionManifest`.
+## Reproducible Selection
 
-A selection manifest records:
-
-```text
-reference identity
-selection parameters and seed
-explicit dataset IDs
-explicit eligible episode IDs
-```
-
-This keeps custom subsets flexible while making every reported subset exactly
-reproducible.
-
-## Rows and Subtables
-
-`TableSlice` is the source-addressing primitive used by the companion package:
-
-```text
-dataset_id
-row_ids
-columns
-```
-
-A one-row slice represents a row; a multi-row, multi-column slice represents a
-subtable. Every slice belongs to one dataset. An ordered collection of slices
-may span multiple selected datasets without merging incompatible schemas.
-
-Slices are source references rather than copied tables. Official task
-configurations use the same primitive, while the companion package can also
-create ad hoc slices from any selected datasets.
+`Catalog.select` resolves dataset and candidate-episode filters.
+`Benchmark.select` then checks source-target eligibility and writes a
+`SelectionManifest` containing the reference identity, selection parameters,
+dataset IDs, and executable episode IDs.

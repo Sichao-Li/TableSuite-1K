@@ -245,7 +245,7 @@ class EvaluationPlan:
 
 
 class PlanRegistry:
-    """An immutable, indexed collection of official evaluation plans."""
+    """Internal indexed collection used by task authoring and execution."""
 
     def __init__(self, plans: tuple[EvaluationPlan, ...]) -> None:
         ordered = tuple(sorted(plans, key=lambda plan: plan.item_id))
@@ -305,7 +305,7 @@ class PlanRegistry:
 
     @classmethod
     def load(cls, path: str | Path) -> PlanRegistry:
-        """Load an official local JSONL or Parquet plan manifest."""
+        """Load a nested internal JSONL or Parquet plan manifest."""
 
         source = Path(path)
         if source.is_dir() or source.suffix == ".parquet":
@@ -326,32 +326,6 @@ class PlanRegistry:
                 if line.strip()
             ]
         return cls(tuple(EvaluationPlan.from_record(record) for record in records))
-
-    @classmethod
-    def from_huggingface(
-        cls,
-        repository: str,
-        *,
-        name: str,
-        split: str,
-        revision: str | None = None,
-    ) -> PlanRegistry:
-        """Load one official task configuration and split from the HF Hub."""
-
-        try:
-            from datasets import load_dataset
-        except ImportError as error:
-            raise RuntimeError(
-                "install tablesuite[hf] to load a task from Hugging Face"
-            ) from error
-        rows = load_dataset(
-            repository,
-            name,
-            split=split,
-            revision=revision,
-        )
-        return cls(tuple(EvaluationPlan.from_record(dict(row)) for row in rows))
-
 
 @dataclass(frozen=True)
 class EvaluationRequest:

@@ -9,10 +9,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import get_dataset_config_names, load_dataset
 
-from tablesuite import Benchmark, load_task
+from tablesuite import Benchmark, Catalog, load_task
 from tablesuite._cli import main as cli_main
-from tablesuite.evaluation import PlanExecutor, PlanRegistry, audit_plans
+from tablesuite.evaluation import PlanExecutor, audit_plans
 from tablesuite.release import TaskGenerationConfig, build_huggingface_release
+from tablesuite.task_records import read_task_records, task_registry
 
 
 def test_release_builder_is_deterministic_value_free_and_executable(
@@ -53,7 +54,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert first_summary["task_counts"] == second_summary["task_counts"]
     assert (first / "README.md").is_file()
     assert (first / "datasets" / "train" / "part-00000.parquet").is_file()
-    assert (first / "metadata" / "release_audit.json").is_file()
+    assert not (first / "metadata").exists()
     assert not (first / "release_summary.json").exists()
     assert not (first / "release_summary.md").exists()
     assert first_summary["catalog_counts"] == {
@@ -62,7 +63,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "prediction_episodes": 3,
         "table_prediction_tasks": 3,
     }
-    assert first_summary["release_version"] == "1.2.1"
+    assert first_summary["release_version"] == "1.3.0"
     reference_summary = json.loads(
         (first / "reference_summary.json").read_text(encoding="utf-8")
     )
@@ -70,11 +71,16 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "configs",
         "contains_source_values",
         "reference_id",
+        "record_schemas",
         "release_version",
         "schema_version",
         "source_provider",
     }
-    assert reference_summary["release_version"] == "1.2.1"
+    assert reference_summary["release_version"] == "1.3.0"
+    assert reference_summary["record_schemas"] == {
+        "catalog": "1.0",
+        "official_tasks": "1.0",
+    }
     assert set(get_dataset_config_names(str(first))) == {
         "datasets",
         "table_prediction_tasks",
@@ -90,13 +96,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     )
     assert sum(len(split) for split in table_prediction_splits.values()) == 3
     table_prediction = table_prediction_splits["train"]
-    assert table_prediction[0]["protocol"] == "zero_label_serialized_table"
-    assert table_prediction[0]["input_interface"] == "serialized_table"
-    assert table_prediction[0]["parameter_updates"] is False
-    assert table_prediction[0]["target_visibility"] == "excluded_from_model_input"
-    assert "feature_columns" not in table_prediction.column_names
-    assert "reference_policy" not in table_prediction.column_names
-    assert "fold_policy" not in table_prediction.column_names
+    assert table_prediction.column_names == ["dataset_id", "primary_metrics"]
     assert {
         row["dataset_id"]
         for split in table_prediction_splits.values()
@@ -111,10 +111,14 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert sum(len(split) for split in prediction_episode_splits.values()) == 3
     prediction_episodes = prediction_episode_splits["train"]
     assert prediction_episodes[0]["shots"] == 4
-    assert prediction_episodes[0]["target_visibility"] == "excluded_from_model_input"
-    assert "feature_columns" not in prediction_episodes.column_names
-    assert "protocols" not in prediction_episodes.column_names
-    assert "k" not in prediction_episodes.column_names
+    assert prediction_episodes.column_names == [
+        "episode_id",
+        "dataset_id",
+        "episode_split",
+        "support_row_ids",
+        "query_row_ids",
+        "shots",
+    ]
     assert {
         row["dataset_id"]
         for split in prediction_episode_splits.values()
@@ -126,6 +130,12 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         cache_dir=str(tmp_path / "hf-cache-grounding"),
     )
     assert sum(len(split) for split in grounding_splits.values()) == 3
+    assert grounding_splits["train"].column_names == [
+        "dataset_id",
+        "eligible_columns",
+        "excluded_identifier_columns",
+        "max_cells",
+    ]
     dataset_splits = load_dataset(
         str(first),
         "datasets",
@@ -133,8 +143,24 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     )
     assert sum(len(split) for split in dataset_splits.values()) == 4
     dataset_catalog = dataset_splits["train"]
-    assert "metadata_tier" not in dataset_catalog.column_names
-    assert "source_review_status" not in dataset_catalog.column_names
+    assert dataset_catalog.column_names == [
+        "dataset_id",
+        "dataset_split",
+        "openml_data_id",
+        "openml_url",
+        "dataset_name",
+        "task_type",
+        "target_column",
+        "feature_columns",
+        "target_transform",
+        "excluded_feature_columns",
+        "source_adaptation_rationale",
+        "n_rows",
+        "n_features",
+        "n_classes",
+        "dedup_cluster_id",
+        "openml_license_claim",
+    ]
     hub_rows = load_dataset(
         str(first),
         "cell_grounding",
@@ -144,6 +170,47 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert len(hub_rows) == first_summary["task_counts"]["cell_grounding"][
         "dataset_test"
     ]
+    assert hub_rows.column_names == [
+        "item_id",
+        "dataset_id",
+        "evaluation_split",
+        "render_seed",
+        "source_row_id",
+        "context_columns",
+        "answer_column",
+        "answer_type",
+        "absolute_tolerance",
+        "relative_tolerance",
+        "template_split",
+    ]
+    qa_rows = load_dataset(
+        str(first),
+        "table_question_answering",
+        split="composition_test",
+        cache_dir=str(tmp_path / "hf-cache-qa"),
+    )
+    assert qa_rows.column_names == [
+        "item_id",
+        "dataset_id",
+        "evaluation_split",
+        "render_seed",
+        "source_row_ids",
+        "source_columns",
+        "operation",
+        "operation_arguments",
+        "answer_type",
+        "absolute_tolerance",
+        "relative_tolerance",
+        "template_split",
+    ]
+    assert set(qa_rows[0]["operation_arguments"]) == {
+        "aggregation",
+        "column",
+        "filter_column",
+        "filter_value_row_id",
+        "maximize_column",
+        "return_column",
+    }
 
     first_plans = _load_all_plans(first)
     second_plans = _load_all_plans(second)
@@ -189,8 +256,10 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         split="dataset_test",
         source=source,
     )
-    grounding_registry = PlanRegistry.load(
-        first / "tasks" / "cell_grounding" / "dataset_test"
+    grounding_registry = _load_registry(
+        first,
+        "cell_grounding",
+        "dataset_test",
     )
     grounding_plan = grounding_registry.get_plan(grounding.ids[0])
     materialized = PlanExecutor(
@@ -204,8 +273,10 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         split="composition_test",
         source=source,
     )
-    qa_registry = PlanRegistry.load(
-        first / "tasks" / "table_question_answering" / "composition_test"
+    qa_registry = _load_registry(
+        first,
+        "table_question_answering",
+        "composition_test",
     )
     qa_plan = qa_registry.get_plan(qa.ids[0])
     qa_item = PlanExecutor(Benchmark.from_path(first, source), qa_registry).materialize(
@@ -259,11 +330,28 @@ def test_release_cli_builds_and_validates(tmp_path: Path, capsys) -> None:
 
 
 def _load_all_plans(root: Path) -> tuple:
+    catalog = Catalog.from_path(root)
     plans = []
     for task in ("cell_grounding", "table_question_answering"):
         for split in sorted((root / "tasks" / task).iterdir()):
-            plans.extend(PlanRegistry.load(split).plans)
+            plans.extend(
+                task_registry(
+                    read_task_records(split),
+                    catalog=catalog,
+                    name=task,
+                    split=split.name,
+                ).plans
+            )
     return tuple(sorted(plans, key=lambda plan: plan.item_id))
+
+
+def _load_registry(root: Path, task: str, split: str):
+    return task_registry(
+        read_task_records(root / "tasks" / task / split),
+        catalog=Catalog.from_path(root),
+        name=task,
+        split=split,
+    )
 
 
 def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:

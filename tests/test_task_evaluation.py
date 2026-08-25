@@ -22,6 +22,7 @@ from tablesuite.evaluation import (
     ScoringSpec,
     audit_plans,
 )
+from tablesuite.task_records import public_task_record
 
 
 def test_plan_registry_round_trip_is_value_free(tmp_path: Path) -> None:
@@ -457,9 +458,11 @@ def test_load_task_can_filter_a_bounded_dataset_subset(
         )
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 def test_load_task_uses_huggingface_configuration_and_split(
     benchmark_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
+    legacy: bool,
 ) -> None:
     reference, source = benchmark_fixture
     import pyarrow.parquet as pq
@@ -494,7 +497,7 @@ def test_load_task_uses_huggingface_configuration_and_split(
             return {"train": dataset_rows}
         assert name == "cell_grounding"
         assert split == "train"
-        return [plan.to_record()]
+        return [plan.to_record() if legacy else public_task_record(plan)]
 
     monkeypatch.setitem(
         sys.modules,

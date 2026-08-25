@@ -16,9 +16,9 @@ reported separately:
 | Surface | Public records | Purpose |
 | --- | ---: | --- |
 | `datasets` | 1,000 | source, schema, split, target, and license metadata |
-| `table_prediction_tasks` | 998 | executable zero-label table prediction contracts |
+| `table_prediction_tasks` | 998 | prediction-eligible datasets and metrics |
 | `prediction_episodes` | 35,472 | frozen 4/16/32-shot support/query references |
-| `grounding_tasks` | 989 | eligible non-target columns for custom grounding |
+| `grounding_tasks` | 989 | eligible non-target columns and sampling caps |
 | `cell_grounding` | 50,012 | official exact-cell evaluation plans |
 | `table_question_answering` | 22,448 | official programmatic table-QA plans |
 
@@ -30,7 +30,7 @@ when a source is too narrow for a particular task.
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.2.1'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v1.3.0'
 ```
 
 ## Runnable Quickstart
@@ -40,7 +40,7 @@ Download one explicitly selected source table directly from OpenML:
 ```bash
 tablesuite fetch-openml \
   --reference 'Lester1996/TableSuite-1K' \
-  --revision v1.2.1 \
+  --revision v1.3.0 \
   --output openml-parquet \
   --dataset-id openml_45069 \
   --accept-source-terms
@@ -56,7 +56,7 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v1.2.1",
+    revision="v1.3.0",
     dataset_ids=("openml_45069",),
 )
 
@@ -126,7 +126,7 @@ from tablesuite import Benchmark, Selection, render_icl_prediction
 benchmark = Benchmark.from_huggingface(
     "Lester1996/TableSuite-1K",
     "openml-parquet",
-    revision="v1.2.1",
+    revision="v1.3.0",
 )
 subset = benchmark.select(
     Selection(
@@ -155,7 +155,7 @@ plans = load_dataset(
     "Lester1996/TableSuite-1K",
     "cell_grounding",
     split="dataset_test",
-    revision="v1.2.1",
+    revision="v1.3.0",
 )
 print(plans[0]["item_id"])
 ```
@@ -166,9 +166,9 @@ referenced OpenML source, renders model input, and computes gold at runtime.
 ## Source and Licensing Boundary
 
 OpenML remains the source-table distributor. Each downloaded table retains its
-upstream terms; `license_claim` is provenance metadata, not a license granted
-by TableSuite-1K. The package downloads only an explicit bounded selection and
-writes a local `SOURCE_NOTICES.json`.
+upstream terms; `openml_license_claim` is provenance metadata, not a license
+granted by TableSuite-1K. The package downloads only an explicit bounded
+selection and writes a local `SOURCE_NOTICES.json`.
 
 TableSuite-1K is independent from and not endorsed by OpenML. See
 [docs/SOURCE_DATA.md](docs/SOURCE_DATA.md).
@@ -190,11 +190,11 @@ separately and are not part of the stable user contract.
 ## CLI
 
 ```bash
-tablesuite info --reference 'Lester1996/TableSuite-1K' --revision v1.2.1
+tablesuite info --reference 'Lester1996/TableSuite-1K' --revision v1.3.0
 
 tablesuite task \
   --reference 'Lester1996/TableSuite-1K' \
-  --revision v1.2.1 \
+  --revision v1.3.0 \
   --source openml-parquet \
   --name table_question_answering \
   --split dataset_test \
@@ -209,8 +209,9 @@ python -m pytest -q
 ruff check src tests examples
 ```
 
-The public authoring implementation is retained for scientific
-reproducibility. Maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
+The deterministic authoring implementation is retained for scientific
+reproducibility, but build audits stay outside the public dataset payload.
+Maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
 The repository contains no model weights, embeddings, raw OpenML tables,
 cluster scripts, experiment reports, leaderboard, or LLM reasoner.
 

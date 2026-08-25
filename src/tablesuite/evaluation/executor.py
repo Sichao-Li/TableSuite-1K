@@ -59,7 +59,7 @@ class PlanExecutor:
         *,
         prediction_resolver: PredictionResolver | None = None,
     ) -> PlanExecutor:
-        """Load an official plan manifest and bind it to source data."""
+        """Load a nested internal plan manifest and bind it to source data."""
 
         return cls(
             benchmark,
