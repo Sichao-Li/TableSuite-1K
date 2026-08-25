@@ -1,8 +1,5 @@
 """Public API for TableSuite-1K's Hugging Face-hosted table tasks."""
 
-from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
-from importlib.metadata import version as _distribution_version
-
 from tablesuite.benchmark import Benchmark, BenchmarkSubset
 from tablesuite.catalog import Catalog
 from tablesuite.generation import (
@@ -42,10 +39,7 @@ from tablesuite.types import (
     TableSlice,
 )
 
-try:
-    __version__ = _distribution_version("tablesuite")
-except _PackageNotFoundError:
-    __version__ = "1.4.0"
+__version__ = "1.4.0"
 
 __all__ = [
     "Benchmark",
