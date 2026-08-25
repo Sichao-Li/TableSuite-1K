@@ -8,6 +8,9 @@ interface. Source values remain on OpenML: the Hugging Face release stores
 dataset identities, row/column references, operations, and scoring policies,
 but no copied table values or model outputs.
 
+The current companion package is `v1.4.0`. It adds deterministic local task
+generation without changing the frozen Hugging Face `v1.3.0` evaluation plans.
+
 ## What Is Released
 
 The catalog contains 1,000 OpenML dataset references. Task eligibility is

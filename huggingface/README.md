@@ -75,6 +75,10 @@ grounding, and table question answering over 1,000 OpenML-referenced datasets.
 This repository stores compact task specifications, not copied source tables,
 rendered answers, model outputs, or checkpoints.
 
+The companion package `v1.4.0` adds deterministic local task generation. The
+official evaluation plans in this dataset remain frozen at data revision
+`v1.3.0`.
+
 ## Release Contents
 
 | Configuration | Records | Unit |
