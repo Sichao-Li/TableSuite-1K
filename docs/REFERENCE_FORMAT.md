@@ -4,6 +4,9 @@ TableSuite-1K v2.0.0 contains six value-free Parquet configurations. The
 `datasets` configuration is the canonical metadata table; every other
 configuration joins to it by `dataset_id`.
 
+Use package v2.0.1 or later with this data revision. The patch declares the
+classification output vocabulary at runtime without changing stored plans.
+
 No configuration contains feature values, targets, support labels, rendered
 questions, gold answers, model outputs, embeddings, or checkpoints.
 

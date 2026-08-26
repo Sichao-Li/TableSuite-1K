@@ -169,7 +169,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "prediction_episodes": 3,
         "table_prediction_tasks": 3,
     }
-    assert first_summary["release_version"] == "2.0.0"
+    assert first_summary["release_version"] == "2.0.1"
     reference_summary = json.loads(
         (first / "reference_summary.json").read_text(encoding="utf-8")
     )
@@ -182,7 +182,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "schema_version",
         "source_provider",
     }
-    assert reference_summary["release_version"] == "2.0.0"
+    assert reference_summary["release_version"] == "2.0.1"
     assert reference_summary["record_schemas"] == {
         "catalog": "1.0",
         "official_tasks": "2.0",

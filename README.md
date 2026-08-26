@@ -21,7 +21,7 @@ benchmark gold is never authored by an LLM.
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.0.0'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.0.1'
 ```
 
 ## Quickstart

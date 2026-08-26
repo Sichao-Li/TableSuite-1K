@@ -93,7 +93,7 @@ source slice at access time. No LLM authors benchmark gold.
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.0.0'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.0.1'
 
 tablesuite fetch-openml \
   --reference Lester1996/TableSuite-1K \

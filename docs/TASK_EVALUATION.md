@@ -2,6 +2,9 @@
 
 Status: **public task-record schema 2.0, released with TableSuite-1K v2.0.0**.
 
+Package v2.0.1 is the minimum supported runtime for prediction requests; it
+adds explicit task-family and classification-label-space rendering.
+
 Users load ordinary Hugging Face configurations. The companion package joins
 each compact task row to `datasets`, resolves the referenced OpenML slice,
 renders the model input, and computes gold programmatically.

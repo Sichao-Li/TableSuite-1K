@@ -36,7 +36,7 @@ from tablesuite.types import Selection
 
 TASK_CONFIGS = ("table_grounding", "table_question_answering")
 RELEASE_CONFIGS = (*CONFIGS, *TASK_CONFIGS)
-RELEASE_VERSION = "2.0.0"
+RELEASE_VERSION = "2.0.1"
 REFERENCE_ID = "tablesuite-1k:2.0"
 _GROUNDING_OPERATION_NAMES = (
     "cell_lookup",
