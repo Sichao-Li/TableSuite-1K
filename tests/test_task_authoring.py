@@ -411,7 +411,7 @@ def test_release_builder_accepts_an_existing_public_release(
         grounding_transfer_items_per_dataset=5,
         qa_items_per_dataset=6,
         qa_transfer_items_per_dataset=6,
-        qa_row_sizes=(4,),
+        qa_row_sizes=(4, 8),
     )
     first = tmp_path / "public-reference"
     rebuilt = tmp_path / "rebuilt-release"
