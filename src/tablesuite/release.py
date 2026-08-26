@@ -83,6 +83,11 @@ def build_huggingface_release(
     )
     try:
         catalog = Catalog.from_path(reference_path)
+        catalog_counts = _write_public_catalog(reference_path, staging)
+        public_catalog = Catalog.from_path(staging)
+        _validate_public_catalog(public_catalog)
+        shutil.copy2(card_path, staging / "README.md")
+
         source = ParquetSource(source_path)
         generated = generate_task_plans(catalog, source, policy)
         audit = audit_plans(generated.plans)
@@ -94,10 +99,6 @@ def build_huggingface_release(
         _validate_task_matrix(task_matrix)
         executed = _validate_execution(catalog, source, generated.plans)
 
-        catalog_counts = _write_public_catalog(reference_path, staging)
-        public_catalog = Catalog.from_path(staging)
-        _validate_public_catalog(public_catalog)
-        shutil.copy2(card_path, staging / "README.md")
         _write_task_configs(staging, generated.plans, policy.shard_size)
         public_plans = _load_release_plans(staging, public_catalog)
         _validate_task_roundtrip(generated.plans, public_plans)
