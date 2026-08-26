@@ -130,6 +130,16 @@ class TaskDataset:
         for plan in self._plans:
             yield self._example(plan)
 
+    def iter_by_dataset(self) -> Iterator[TaskExample]:
+        """Iterate in source-local order for efficient large evaluations."""
+
+        plans = sorted(
+            self._plans,
+            key=lambda plan: (plan.source.dataset_id, plan.item_id),
+        )
+        for plan in plans:
+            yield self._example(plan)
+
     def __getitem__(self, key: int | str) -> TaskExample:
         """Materialize an example by stable ID or integer position."""
 

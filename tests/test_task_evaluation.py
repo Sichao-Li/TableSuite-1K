@@ -457,6 +457,10 @@ def test_task_api_materializes_input_only_examples_and_reports_metrics(
     report = task.evaluate({"grounding_task_1": "21", "grounding_task_2": "wrong"})
 
     assert len(task) == 2
+    assert tuple(item.id for item in task.iter_by_dataset()) == (
+        "grounding_task_1",
+        "grounding_task_2",
+    )
     assert example.id == "grounding_task_1"
     assert not hasattr(example, "answer")
     assert task.summary()["examples"] == 2
