@@ -37,17 +37,21 @@ tablesuite fetch-openml \
   --accept-source-terms
 ```
 
-Load one official task split:
+Open the suite and load one official task split:
 
 ```python
-from tablesuite import load_task
+from tablesuite import TableSuite
 
-task = load_task(
+suite = TableSuite.open(
     "Lester1996/TableSuite-1K",
-    "table_grounding",
-    split="dataset_test",
     source="openml-parquet",
     revision="v2.0.0",
+)
+print([task.name for task in suite.tasks()])
+
+task = suite.official(
+    "table_grounding",
+    split="dataset_test",
     dataset_ids=("openml_45069",),
 )
 
@@ -66,6 +70,19 @@ print(report.to_dict())
 
 Missing predictions fail official evaluation. `allow_partial=True` is
 available only for diagnostic runs.
+
+Prediction uses the same entry point while making the inference protocol
+explicit:
+
+```python
+prediction = suite.prediction(
+    "few_shot_icl",
+    dataset_ids=("openml_45069",),
+    shots=(16,),
+    max_episodes_per_dataset_per_shot=1,
+)
+case = next(prediction.few_shot_icl())
+```
 
 ## Public Configurations
 
@@ -145,13 +162,8 @@ Official evaluation uses frozen Hugging Face plans. Training and stress-test
 plans can be generated with the same deterministic authoring path:
 
 ```python
-from tablesuite import generate_task
-
-generated = generate_task(
-    "Lester1996/TableSuite-1K",
+generated = suite.generate(
     "table_question_answering",
-    source="openml-parquet",
-    revision="v2.0.0",
     split="train",
     max_datasets=10,
     items_per_dataset=100,

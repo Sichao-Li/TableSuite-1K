@@ -104,14 +104,16 @@ tablesuite fetch-openml \
 ```
 
 ```python
-from tablesuite import load_task
+from tablesuite import TableSuite
 
-task = load_task(
+suite = TableSuite.open(
     "Lester1996/TableSuite-1K",
-    "table_grounding",
-    split="dataset_test",
     source="openml-parquet",
     revision="v2.0.0",
+)
+task = suite.official(
+    "table_grounding",
+    split="dataset_test",
     dataset_ids=("openml_45069",),
 )
 
