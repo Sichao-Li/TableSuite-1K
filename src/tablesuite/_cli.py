@@ -396,10 +396,17 @@ def _preview(
         raise SystemExit(
             "--query-rows-per-table applies only to partially labelled tables"
         )
-    if query_scope != "full_table" and task != "partially_labeled_serialized_table":
-        raise SystemExit("--query-scope applies only to partially labelled tables")
+    serialized = {
+        "zero_label_serialized_table",
+        "partially_labeled_serialized_table",
+    }
+    if query_scope != "full_table" and task not in serialized:
+        raise SystemExit("--query-scope applies only to serialized-table protocols")
     if task == "zero_label_serialized_table":
-        examples = subset.zero_label_serialized_table(rows_per_table=rows_per_table)
+        examples = subset.zero_label_serialized_table(
+            scope=query_scope,
+            rows_per_table=rows_per_table,
+        )
     elif task == "partially_labeled_serialized_table":
         examples = subset.partially_labeled_serialized_table(
             query_scope=query_scope,

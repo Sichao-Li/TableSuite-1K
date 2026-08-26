@@ -112,6 +112,9 @@ parameter updates are part of an official run.
 | `zero_label_serialized_table` | feature-only serialized table | none |
 | `partially_labeled_serialized_table` | one table with labelled support and masked queries | 4/16/32 |
 
+Serialized-table requests support full-table scope and a bounded episode scope
+that reuses the frozen ICL query rows for matched interface comparisons.
+
 ### Table Grounding
 
 Every answer comes only from the table displayed in the request. Official v2

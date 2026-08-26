@@ -61,8 +61,8 @@ query_row_ids
 shots
 ```
 
-These records support few-shot ICL and partially labelled serialized-table
-prediction. Zero-shot ICL reuses the query references without exposing support
+These records support few-shot ICL and episode-scoped serialized-table
+prediction. Zero-shot protocols reuse the query references without exposing support
 labels.
 
 ### `grounding_tasks`

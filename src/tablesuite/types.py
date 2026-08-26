@@ -237,8 +237,6 @@ class SerializedTablePredictionRequest:
             raise ValueError(f"unknown serialized-table protocol: {self.protocol}")
         if self.scope not in {"full_table", "episode"}:
             raise ValueError(f"unknown serialized-table scope: {self.scope}")
-        if self.protocol == "zero_label_serialized_table" and self.scope != "full_table":
-            raise ValueError("zero-label serialized tables require full-table scope")
         if self.target_column in self.table.source.columns:
             raise ValueError("target column leaked into serialized prediction table")
         if self.protocol == "zero_label_serialized_table":

@@ -12,6 +12,7 @@ from tablesuite import (
     TableSlice,
     __version__,
 )
+from tablesuite.benchmark import _derive_zero_shot_episodes
 from tablesuite.rendering import (
     render_icl_prediction,
     render_serialized_table_prediction,
@@ -176,6 +177,24 @@ def test_zero_shot_icl_reuses_frozen_queries_without_demonstrations(
     assert "Query q0: Age=24, Income=500 -> ?" in rendered.input_text
 
 
+def test_zero_shot_episode_deduplication_is_dataset_local() -> None:
+    candidates = [
+        {
+            "dataset_id": dataset_id,
+            "episode_id": f"{dataset_id}:k4",
+            "shots": 4,
+            "support_row_ids": ["0", "1", "2", "3"],
+            "query_row_ids": ["4", "5"],
+        }
+        for dataset_id in ("openml_1", "openml_2")
+    ]
+
+    assert {item["dataset_id"] for item in _derive_zero_shot_episodes(candidates)} == {
+        "openml_1",
+        "openml_2",
+    }
+
+
 def test_episode_limit_applies_to_each_selected_few_shot_protocol(
     benchmark_fixture: tuple[Path, Path]
 ) -> None:
@@ -221,6 +240,26 @@ def test_icl_and_partial_table_reuse_the_same_frozen_episode(
         == table.request.visible_labels.source.row_ids
     )
     assert icl.request.query.source.row_ids == table.request.query_row_ids
+
+
+def test_zero_label_episode_scope_reuses_zero_shot_queries(
+    benchmark_fixture: tuple[Path, Path]
+) -> None:
+    reference, source = benchmark_fixture
+    subset = Benchmark.from_path(reference, source).select(
+        Selection(
+            tasks=("zero_label_serialized_table", "zero_shot_icl"),
+            dataset_ids=("openml_1",),
+        )
+    )
+
+    icl = next(subset.zero_shot_icl())
+    table = next(subset.zero_label_serialized_table(scope="episode"))
+
+    assert table.request.scope == "episode"
+    assert table.request.visible_labels is None
+    assert table.request.query_row_ids == icl.request.query.source.row_ids
+    assert table.gold.query_targets == icl.gold.query_targets
 
 
 def test_serialized_table_prediction_can_be_deterministically_chunked(

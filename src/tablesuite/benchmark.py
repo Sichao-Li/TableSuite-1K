@@ -174,43 +174,62 @@ class BenchmarkSubset:
     def zero_label_serialized_table(
         self,
         *,
+        scope: SerializedTableScope = "full_table",
         rows_per_table: int | None = None,
     ) -> Iterator[SerializedTablePredictionExample]:
         """Yield feature-only tables with separate per-row evaluation targets.
 
         By default, each request contains every source row with a valid target.
-        ``rows_per_table`` creates deterministic source-order chunks for models
-        with bounded input capacity; it never samples or drops eligible rows.
+        ``scope="episode"`` uses the same frozen query rows as zero-shot ICL for
+        a matched, bounded interface comparison. ``rows_per_table`` chunks the
+        selected scope without sampling or dropping its rows.
         """
 
         self._require_task("zero_label_serialized_table")
+        if scope not in {"full_table", "episode"}:
+            raise ValueError("scope must be 'full_table' or 'episode'")
         if rows_per_table is not None and rows_per_table <= 0:
             raise ValueError("rows_per_table must be positive")
-        for dataset in self._selection.datasets:
-            if (
-                dataset.dataset_id
-                not in self._selection.table_prediction_dataset_ids
-            ):
+        if scope == "episode":
+            sources = (
+                (
+                    self._datasets[str(episode["dataset_id"])],
+                    tuple(str(value) for value in episode["query_row_ids"]),
+                    str(episode["episode_id"]),
+                )
+                for episode in _derive_zero_shot_episodes(list(self._episodes))
+            )
+        else:
+            sources = (
+                (
+                    dataset,
+                    tuple(
+                        str(row_id)
+                        for row_id, row in enumerate(self.source.rows(dataset))
+                        if valid_target(
+                            row[dataset.target_column], dataset.task_family
+                        )
+                    ),
+                    dataset.dataset_id,
+                )
+                for dataset in self._selection.datasets
+                if dataset.dataset_id
+                in self._selection.table_prediction_dataset_ids
+            )
+        for dataset, row_ids, source_id in sources:
+            if not row_ids:
                 continue
+            chunk_size = rows_per_table or len(row_ids)
             rows = self.source.rows(dataset)
-            eligible = [
-                (row_id, row)
-                for row_id, row in enumerate(rows)
-                if valid_target(row[dataset.target_column], dataset.task_family)
-            ]
-            if not eligible:
-                continue
-            chunk_size = rows_per_table or len(eligible)
-            for chunk_index, start in enumerate(range(0, len(eligible), chunk_size)):
-                chunk = eligible[start : start + chunk_size]
-                row_ids = tuple(str(row_id) for row_id, _ in chunk)
+            for chunk_index, start in enumerate(range(0, len(row_ids), chunk_size)):
+                query_ids = row_ids[start : start + chunk_size]
                 request_id = (
-                    f"{dataset.dataset_id}:zero_label_serialized_table:{chunk_index}"
+                    f"{source_id}:zero_label_serialized_table:{scope}:{chunk_index}"
                 )
                 table = self.materialize(
                     TableSlice(
                         dataset_id=dataset.dataset_id,
-                        row_ids=row_ids,
+                        row_ids=query_ids,
                         columns=dataset.feature_columns,
                     )
                 )
@@ -218,7 +237,7 @@ class BenchmarkSubset:
                     request=SerializedTablePredictionRequest(
                         request_id=request_id,
                         protocol="zero_label_serialized_table",
-                        scope="full_table",
+                        scope=scope,
                         dataset_split=dataset.dataset_split,
                         task_type=dataset.task_type,
                         task_family=dataset.task_family,
@@ -228,7 +247,8 @@ class BenchmarkSubset:
                     gold=PredictionGold(
                         request_id=request_id,
                         query_targets=tuple(
-                            row[dataset.target_column] for _, row in chunk
+                            rows[int(row_id)][dataset.target_column]
+                            for row_id in query_ids
                         ),
                     ),
                 )
@@ -465,14 +485,15 @@ def _derive_zero_shot_episodes(
     """Reuse query sets from source-validated few-shot episodes."""
 
     output: list[dict[str, Any]] = []
-    seen: set[tuple[str, ...]] = set()
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     for candidate in valid_candidates:
         if int(candidate["shots"]) == 0:
             continue
         query_ids = tuple(str(value) for value in candidate["query_row_ids"])
-        if query_ids in seen:
+        key = (str(candidate["dataset_id"]), query_ids)
+        if key in seen:
             continue
-        seen.add(query_ids)
+        seen.add(key)
         record = dict(candidate)
         record["episode_id"] = f"{candidate['episode_id']}:shots0"
         record["base_episode_id"] = str(candidate["episode_id"])

@@ -124,7 +124,9 @@ result = task.score(example.id, model(example.prompt))
 ## Protocol Summary
 
 Prediction supports zero-shot and 4/16/32-shot row ICL, plus zero-label and
-partially labelled serialized-table inference. It is inference-only.
+partially labelled serialized-table inference. Serialized tables can cover the
+full source table or the same frozen query rows as the matched ICL protocol.
+It is inference-only.
 
 Table grounding operates only on the table shown in the request. Official v2
 operations are `cell_lookup`, `row_lookup`, `column_values`,

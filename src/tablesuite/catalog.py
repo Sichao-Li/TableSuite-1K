@@ -20,6 +20,7 @@ CONFIGS = (
 EPISODE_PROTOCOLS = {
     "zero_shot_icl",
     "few_shot_icl",
+    "zero_label_serialized_table",
     "partially_labeled_serialized_table",
 }
 

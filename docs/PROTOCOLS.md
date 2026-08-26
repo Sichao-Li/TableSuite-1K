@@ -14,7 +14,7 @@ fitting, or per-dataset parameter updates are permitted.
 | --- | --- | --- | --- |
 | `zero_shot_icl` | row-query format | none | frozen episode query rows |
 | `few_shot_icl` | row examples | 4/16/32 demonstrations | frozen episode query rows |
-| `zero_label_serialized_table` | serialized table | none | every eligible table row |
+| `zero_label_serialized_table` | serialized table | none | every eligible row, or matched frozen episode queries |
 | `partially_labeled_serialized_table` | serialized table | 4/16/32 support rows | all remaining rows by default |
 
 `SerializedTablePredictionRequest` always stores a feature-only table. For the
@@ -22,7 +22,9 @@ partially labelled protocol, visible support targets live in a separate
 `visible_labels` slice and are merged into the rendered table. Query targets
 remain only in `PredictionGold`. Zero-label requests cover all eligible source
 rows by default; deterministic source-order chunks are allowed for bounded
-consumers and may not sample or drop rows. Partially labelled requests retain a
+consumers and may not sample or drop rows. Its optional episode scope reuses
+the frozen zero-shot query rows for a matched interface comparison. Partially
+labelled requests retain a
 frozen episode's support rows and predict every other eligible row by default.
 The optional episode scope retains only that episode's frozen queries, enabling
 a controlled comparison against few-shot ICL with identical source rows.
