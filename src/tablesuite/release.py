@@ -348,7 +348,7 @@ def _required_alias(record: dict[str, Any], *names: str) -> Any:
 
 
 def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    if not record.get("feature_columns"):
+    if "feature_columns" in record and not record["feature_columns"]:
         return None
     return {
         "dataset_id": str(record["dataset_id"]),
@@ -357,7 +357,7 @@ def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _prediction_episode_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    if not record.get("feature_columns"):
+    if "feature_columns" in record and not record["feature_columns"]:
         return None
     support = [str(value) for value in record["support_row_ids"]]
     query = [str(value) for value in record["query_row_ids"]]
