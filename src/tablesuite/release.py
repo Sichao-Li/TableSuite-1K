@@ -306,8 +306,10 @@ def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "dataset_id": str(record["dataset_id"]),
         "dataset_split": str(record["dataset_split"]),
-        "openml_data_id": str(record["source_id"]),
-        "openml_url": str(record["source_url"]),
+        "openml_data_id": str(
+            _required_alias(record, "openml_data_id", "source_id")
+        ),
+        "openml_url": str(_required_alias(record, "openml_url", "source_url")),
         "dataset_name": str(record.get("dataset_name") or record["dataset_id"]),
         "task_type": str(record["task_type"]),
         "target_column": str(record["target_column"]),
@@ -332,8 +334,17 @@ def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
         "dedup_cluster_id": str(
             record.get("dedup_cluster_id") or record["dataset_id"]
         ),
-        "openml_license_claim": str(record.get("license_claim") or ""),
+        "openml_license_claim": str(
+            record.get("openml_license_claim") or record.get("license_claim") or ""
+        ),
     }
+
+
+def _required_alias(record: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in record:
+            return record[name]
+    raise KeyError(f"record is missing required field aliases: {names}")
 
 
 def _table_prediction_record(record: dict[str, Any]) -> dict[str, Any] | None:

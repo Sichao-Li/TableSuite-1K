@@ -401,6 +401,48 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert qa.score(qa_plan.item_id, qa_item.gold.answer).correct
 
 
+def test_release_builder_accepts_an_existing_public_release(
+    tmp_path: Path,
+) -> None:
+    reference, source = _authoring_fixture(tmp_path)
+    card = Path(__file__).parents[1] / "huggingface" / "README.md"
+    config = TaskGenerationConfig(
+        grounding_items_per_dataset=5,
+        grounding_transfer_items_per_dataset=5,
+        qa_items_per_dataset=6,
+        qa_transfer_items_per_dataset=6,
+        qa_row_sizes=(4,),
+    )
+    first = tmp_path / "public-reference"
+    rebuilt = tmp_path / "rebuilt-release"
+
+    build_huggingface_release(
+        reference_root=reference,
+        source_root=source,
+        output_dir=first,
+        dataset_card=card,
+        config=config,
+    )
+    summary = build_huggingface_release(
+        reference_root=first,
+        source_root=source,
+        output_dir=rebuilt,
+        dataset_card=card,
+        config=config,
+    )
+
+    assert summary["passed"]
+    assert Catalog.from_path(rebuilt).summary()["datasets"] == 4
+    assert set(get_dataset_config_names(str(rebuilt))) == {
+        "datasets",
+        "table_prediction_tasks",
+        "prediction_episodes",
+        "grounding_tasks",
+        "table_grounding",
+        "table_question_answering",
+    }
+
+
 def test_release_cli_builds_and_validates(tmp_path: Path, capsys) -> None:
     reference, source = _authoring_fixture(tmp_path)
     output = tmp_path / "release-cli"
