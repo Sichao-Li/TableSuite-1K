@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from tablesuite._util import canonical_json, normalize_value
+
 TaskName = Literal[
     "zero_shot_icl",
     "few_shot_icl",
@@ -227,9 +229,16 @@ class SerializedTablePredictionRequest:
     task_family: TaskFamily
     target_column: str
     table: MaterializedTableSlice
+    class_labels: tuple[Any, ...] = ()
     visible_labels: MaterializedTableSlice | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "class_labels",
+            tuple(normalize_value(value) for value in self.class_labels),
+        )
+        _validate_prediction_label_space(self.task_family, self.class_labels)
         if self.protocol not in {
             "zero_label_serialized_table",
             "partially_labeled_serialized_table",
@@ -292,9 +301,16 @@ class ICLPredictionRequest:
     target_column: str
     query: MaterializedTableSlice
     shots: int
+    class_labels: tuple[Any, ...] = ()
     demonstrations: MaterializedTableSlice | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "class_labels",
+            tuple(normalize_value(value) for value in self.class_labels),
+        )
+        _validate_prediction_label_space(self.task_family, self.class_labels)
         if self.protocol not in {"zero_shot_icl", "few_shot_icl"}:
             raise ValueError(f"unknown ICL protocol: {self.protocol}")
         if self.shots not in {0, 4, 16, 32}:
@@ -383,6 +399,23 @@ class RenderedPrediction:
     serialization_version: str
     input_text: str
     query_aliases: dict[str, str]
+
+
+def _validate_prediction_label_space(
+    task_family: TaskFamily,
+    class_labels: tuple[Any, ...],
+) -> None:
+    if task_family == "regression":
+        if class_labels:
+            raise ValueError("regression requests cannot define class labels")
+        return
+    if not class_labels:
+        raise ValueError("classification requests require allowed class labels")
+    keys = [canonical_json(value) for value in class_labels]
+    if "null" in keys:
+        raise ValueError("classification labels cannot contain missing values")
+    if len(keys) != len(set(keys)):
+        raise ValueError("classification labels must be unique")
 
 
 @dataclass(frozen=True)

@@ -114,6 +114,9 @@ parameter updates are part of an official run.
 
 Serialized-table requests support full-table scope and a bounded episode scope
 that reuses the frozen ICL query rows for matched interface comparisons.
+Every request states its task family. Classification requests also state the
+allowed target-label vocabulary; zero-label means that no source row carries a
+visible label assignment, not that the output space is undefined.
 
 ### Table Grounding
 

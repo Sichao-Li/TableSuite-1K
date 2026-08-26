@@ -65,6 +65,7 @@ def test_zero_label_serialized_table_is_multirow_and_target_free(
     assert example.request.protocol == "zero_label_serialized_table"
     assert example.request.scope == "full_table"
     assert example.request.visible_labels is None
+    assert example.request.class_labels == (0, 1)
     assert example.request.query_row_ids == tuple(str(index) for index in range(8))
     assert not hasattr(example.request, "query_targets")
     assert not hasattr(example, "fold")
@@ -72,7 +73,12 @@ def test_zero_label_serialized_table_is_multirow_and_target_free(
     assert example.gold.query_targets == (0, 1, 0, 1, 0, 1, 0, 1)
 
     rendered = render_serialized_table_prediction(example.request, view="markdown")
-    assert rendered.input_text.startswith('Predict "Default" for every row.')
+    assert rendered.input_text.startswith(
+        "Task family: classification\n"
+        "Target: Default\n"
+        "Allowed target labels: [0,1]\n"
+        'Predict "Default" for every row.'
+    )
     assert "| row_id | Age | Income |" in rendered.input_text
     assert "| r0 | 20 | 100 |" in rendered.input_text
     assert "| r7 | 27 | 800 |" in rendered.input_text
@@ -101,12 +107,16 @@ def test_partially_labeled_serialized_table_exposes_only_support_targets(
     assert example.request.protocol == "partially_labeled_serialized_table"
     assert example.request.scope == "full_table"
     assert example.request.visible_labels is not None
+    assert example.request.class_labels == (0, 1)
     assert example.request.visible_labels.source.row_ids == ("0", "1", "2", "3")
     assert example.request.query_row_ids == ("4", "5", "6", "7")
     assert example.gold.query_targets == (0, 1, 0, 1)
 
     rendered = render_serialized_table_prediction(example.request, view="markdown")
     assert rendered.input_text.startswith(
+        "Task family: classification\n"
+        "Target: Default\n"
+        "Allowed target labels: [0,1]\n"
         'Predict "Default" for rows where the target is masked.'
     )
     assert "| row_id | Age | Income | Default |" in rendered.input_text
@@ -142,10 +152,15 @@ def test_few_shot_icl_uses_row_examples_not_table_serialization(
     assert example.request.demonstrations is not None
     assert example.shots == 4
     assert len(example.request.demonstrations.rows) == 4
+    assert example.request.class_labels == (0, 1)
     assert len(example.gold.query_targets) == 2
 
     rendered = render_icl_prediction(example.request)
-    assert rendered.input_text.startswith("Target: Default")
+    assert rendered.input_text.startswith(
+        "Task family: classification\n"
+        "Target: Default\n"
+        "Allowed target labels: [0,1]"
+    )
     assert "Row A: Age=20, Income=100 -> 0" in rendered.input_text
     assert "Row D: Age=23, Income=400 -> 1" in rendered.input_text
     assert "Query q0: Age=24, Income=500 -> ?" in rendered.input_text
@@ -171,10 +186,33 @@ def test_zero_shot_icl_reuses_frozen_queries_without_demonstrations(
     assert example.request.protocol == "zero_shot_icl"
     assert example.shots == 0
     assert example.request.demonstrations is None
+    assert example.request.class_labels == (0, 1)
     rendered = render_icl_prediction(example.request)
     assert "Row A:" not in rendered.input_text
     assert "Examples:" not in rendered.input_text
     assert "Query q0: Age=24, Income=500 -> ?" in rendered.input_text
+    assert "Allowed target labels: [0,1]" in rendered.input_text
+
+
+def test_regression_request_declares_family_without_class_labels(
+    benchmark_fixture: tuple[Path, Path]
+) -> None:
+    reference, source = benchmark_fixture
+    example = next(
+        Benchmark.from_path(reference, source)
+        .select(
+            Selection(
+                tasks=("zero_label_serialized_table",),
+                dataset_ids=("openml_2",),
+            )
+        )
+        .zero_label_serialized_table()
+    )
+
+    assert example.request.class_labels == ()
+    rendered = render_serialized_table_prediction(example.request)
+    assert rendered.input_text.startswith("Task family: regression\nTarget: Score\n")
+    assert "Allowed target labels:" not in rendered.input_text
 
 
 def test_zero_shot_episode_deduplication_is_dataset_local() -> None:

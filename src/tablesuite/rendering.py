@@ -38,7 +38,7 @@ def render_icl_prediction(
         f"q{index}": source_id
         for index, source_id in enumerate(request.query.source.row_ids)
     }
-    sections = [f"Target: {request.target_column}"]
+    sections = ["\n".join(_prediction_contract(request))]
     if request.demonstrations is not None:
         examples = [
             (
@@ -101,11 +101,12 @@ def render_serialized_table_prediction(
     query_aliases = {
         aliases_by_source[source_id]: source_id for source_id in request.query_row_ids
     }
+    contract = "\n".join(_prediction_contract(request))
     return RenderedPrediction(
         request_id=request.request_id,
         view=view,
         serialization_version=TABLE_PREDICTION_SERIALIZATION_VERSION,
-        input_text=f"{instruction}\n\n{table}",
+        input_text=f"{contract}\n{instruction}\n\n{table}",
         query_aliases=query_aliases,
     )
 
@@ -143,6 +144,20 @@ def _render_feature_row(row: dict[str, Any], columns: tuple[str, ...]) -> str:
     return ", ".join(
         f"{column}={_display(normalize_value(row[column]))}" for column in columns
     )
+
+
+def _prediction_contract(
+    request: ICLPredictionRequest | SerializedTablePredictionRequest,
+) -> list[str]:
+    lines = [
+        f"Task family: {request.task_family}",
+        f"Target: {request.target_column}",
+    ]
+    if request.task_family == "classification":
+        lines.append(
+            "Allowed target labels: " + canonical_json(list(request.class_labels))
+        )
+    return lines
 
 
 def _alphabetic_label(index: int) -> str:

@@ -8,6 +8,10 @@ absent from the request object; only explicitly selected support labels may be
 visible. All official prediction protocols are inference-only: no fine-tuning,
 fitting, or per-dataset parameter updates are permitted.
 
+The task family and complete classification output vocabulary are target-schema
+metadata and are shown in every request. They reveal no row-to-label assignment;
+"visible labels" below refers only to assignments attached to source rows.
+
 ### Protocol Matrix
 
 | Protocol | Interface | Visible labels | Query scope |

@@ -11,6 +11,7 @@ from typing import Any
 from tablesuite._util import (
     canonical_json,
     normalize_identifier,
+    normalize_value,
     stable_id,
     stable_order,
     stable_value_key,
@@ -145,6 +146,7 @@ class BenchmarkSubset:
         self.manifest = manifest
         self._episodes = eligible_episodes
         self._datasets = {dataset.dataset_id: dataset for dataset in selection.datasets}
+        self._class_labels: dict[str, tuple[Any, ...]] = {}
 
     @property
     def datasets(self) -> tuple[DatasetSpec, ...]:
@@ -243,6 +245,7 @@ class BenchmarkSubset:
                         task_family=dataset.task_family,
                         target_column=dataset.target_column,
                         table=table,
+                        class_labels=self._classification_labels(dataset),
                     ),
                     gold=PredictionGold(
                         request_id=request_id,
@@ -324,6 +327,7 @@ class BenchmarkSubset:
                     task_family=dataset.task_family,
                     target_column=dataset.target_column,
                     table=table,
+                    class_labels=self._classification_labels(dataset),
                     visible_labels=visible_labels,
                 )
                 query_targets = tuple(
@@ -395,6 +399,7 @@ class BenchmarkSubset:
                 target_column=dataset.target_column,
                 query=query,
                 shots=shots,
+                class_labels=self._classification_labels(dataset),
                 demonstrations=demonstrations,
             ),
             gold=PredictionGold(
@@ -404,6 +409,25 @@ class BenchmarkSubset:
             episode_id=request_id,
             shots=shots,
         )
+
+    def _classification_labels(self, dataset: DatasetSpec) -> tuple[Any, ...]:
+        if dataset.task_family == "regression":
+            return ()
+        cached = self._class_labels.get(dataset.dataset_id)
+        if cached is not None:
+            return cached
+        labels = {
+            canonical_json(normalize_value(row[dataset.target_column])): normalize_value(
+                row[dataset.target_column]
+            )
+            for row in self.source.rows(dataset)
+            if valid_target(row[dataset.target_column], dataset.task_family)
+        }
+        ordered = tuple(labels[key] for key in sorted(labels))
+        if not ordered:
+            raise ValueError(f"{dataset.dataset_id}: classification label space is empty")
+        self._class_labels[dataset.dataset_id] = ordered
+        return ordered
 
     def grounding(self) -> Iterator[CellFact]:
         """Yield deterministic, column-balanced non-target cell facts."""
