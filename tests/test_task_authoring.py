@@ -18,7 +18,7 @@ from tablesuite import (
     load_task,
 )
 from tablesuite._cli import main as cli_main
-from tablesuite.authoring import _grounding_slots, _qa_slots
+from tablesuite.authoring import _evaluation_pools, _grounding_slots, _qa_slots
 from tablesuite.evaluation import PlanExecutor, audit_plans
 from tablesuite.release import TaskGenerationConfig, build_huggingface_release
 from tablesuite.task_records import read_task_records, task_registry
@@ -57,7 +57,6 @@ def test_qa_schedule_balances_operation_and_row_size_independently() -> None:
         12,
         0,
     )
-
     operations = [operation for _, operation in slots]
     row_sizes = [row_size for row_size, _ in slots]
     assert {operation: operations.count(operation) for operation in set(operations)} == {
@@ -78,6 +77,32 @@ def test_qa_schedule_balances_operation_and_row_size_independently() -> None:
         for operation in set(operations)
     )
 
+
+def test_large_row_pools_are_virtual_deterministic_and_disjoint() -> None:
+    dataset = type(
+        "Dataset",
+        (),
+        {"dataset_id": "openml_large", "dataset_split": "train"},
+    )()
+    pools = _evaluation_pools(dataset, 11_000_000, 7)
+
+    assert {name: len(pool) for name, pool in pools.items()} == {
+        "train": 7_700_000,
+        "episode_test": 1_100_000,
+        "template_test": 1_100_000,
+        "composition_test": 1_100_000,
+    }
+    samples = {
+        name: pool.sample(16, identity=f"{name}:example", seed=7)
+        for name, pool in pools.items()
+    }
+    assert all(len(values) == len(set(values)) == 16 for values in samples.values())
+    assert len(set().union(*(set(values) for values in samples.values()))) == 64
+    assert samples["train"] == pools["train"].sample(
+        16,
+        identity="train:example",
+        seed=7,
+    )
 
 def test_release_builder_is_deterministic_value_free_and_executable(
     tmp_path: Path,

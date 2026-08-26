@@ -122,6 +122,40 @@ class TaskGenerationReport:
         }
 
 
+@dataclass(frozen=True)
+class _RowPool:
+    """One deterministic slice of a virtual permutation of source row IDs."""
+
+    row_count: int
+    start: int
+    stop: int
+    offset: int
+    stride: int
+
+    def __len__(self) -> int:
+        return self.stop - self.start
+
+    def sample(self, count: int, *, identity: str, seed: int) -> tuple[str, ...]:
+        """Select unique rows without materializing or sorting the full pool."""
+
+        length = len(self)
+        if count <= 0 or count > length:
+            raise ValueError(f"cannot sample {count} rows from a pool of {length}")
+        local_offset = int(stable_order(f"{identity}:offset", seed), 16) % length
+        local_stride = _coprime_stride(length, f"{identity}:stride", seed)
+        return tuple(
+            str(
+                (
+                    self.offset
+                    + self.stride
+                    * (self.start + (local_offset + index * local_stride) % length)
+                )
+                % self.row_count
+            )
+            for index in range(count)
+        )
+
+
 def generate_task_plans(
     catalog: Catalog,
     source: ParquetSource,
@@ -271,28 +305,37 @@ def _evaluation_pools(
     dataset: DatasetSpec,
     row_count: int,
     seed: int,
-) -> dict[EvaluationSplit, tuple[str, ...]]:
-    row_ids = tuple(
-        sorted(
-            (str(index) for index in range(row_count)),
-            key=lambda row_id: stable_order(
-                f"{dataset.dataset_id}:row:{row_id}", seed
-            ),
-        )
-    )
+) -> dict[EvaluationSplit, _RowPool]:
+    if row_count <= 0:
+        return {}
+    offset = int(stable_order(f"{dataset.dataset_id}:rows:offset", seed), 16) % row_count
+    stride = _coprime_stride(row_count, f"{dataset.dataset_id}:rows:stride", seed)
+
+    def pool(start: int, stop: int) -> _RowPool:
+        return _RowPool(row_count, start, stop, offset, stride)
+
     if dataset.dataset_split == "validation":
-        return {"validation": row_ids}
+        return {"validation": pool(0, row_count)}
     if dataset.dataset_split == "test":
-        return {"dataset_test": row_ids}
-    train_end = int(row_count * 0.70)
-    episode_end = train_end + int(row_count * 0.10)
-    template_end = episode_end + int(row_count * 0.10)
+        return {"dataset_test": pool(0, row_count)}
+    train_end = row_count * 70 // 100
+    episode_end = train_end + row_count * 10 // 100
+    template_end = episode_end + row_count * 10 // 100
     return {
-        "train": row_ids[:train_end],
-        "episode_test": row_ids[train_end:episode_end],
-        "template_test": row_ids[episode_end:template_end],
-        "composition_test": row_ids[template_end:],
+        "train": pool(0, train_end),
+        "episode_test": pool(train_end, episode_end),
+        "template_test": pool(episode_end, template_end),
+        "composition_test": pool(template_end, row_count),
     }
+
+
+def _coprime_stride(length: int, identity: str, seed: int) -> int:
+    if length <= 1:
+        return 1
+    stride = int(stable_order(identity, seed), 16) % (length - 1) + 1
+    while math.gcd(stride, length) != 1:
+        stride = stride % length + 1
+    return stride
 
 
 def _eligible_columns(
@@ -317,7 +360,7 @@ def _grounding_plans(
     dataset: DatasetSpec,
     rows: list[dict[str, Any]],
     columns: tuple[str, ...],
-    row_ids: tuple[str, ...],
+    row_ids: _RowPool,
     split: EvaluationSplit,
     limit: int,
     config: TaskGenerationConfig,
@@ -340,14 +383,12 @@ def _grounding_plans(
         for retry in range(_SLOT_ATTEMPTS):
             attempt = slot * _SLOT_ATTEMPTS + retry
             requested_rows = 1 if operation_name == "cell_lookup" else row_size
-            candidate_rows = tuple(
-                sorted(
-                    row_ids,
-                    key=lambda row_id: stable_order(
-                        f"{dataset.dataset_id}:{split}:grounding:{slot}:{retry}:{row_id}",
-                        config.seed,
-                    ),
-                )[:requested_rows]
+            candidate_rows = row_ids.sample(
+                requested_rows,
+                identity=(
+                    f"{dataset.dataset_id}:{split}:grounding:{slot}:{retry}"
+                ),
+                seed=config.seed,
             )
             operation = _grounding_operation(
                 rows,
@@ -471,7 +512,7 @@ def _qa_plans(
     dataset: DatasetSpec,
     rows: list[dict[str, Any]],
     columns: tuple[str, ...],
-    row_ids: tuple[str, ...],
+    row_ids: _RowPool,
     split: EvaluationSplit,
     limit: int,
     config: TaskGenerationConfig,
@@ -493,14 +534,10 @@ def _qa_plans(
     for slot, (row_size, operation_name) in enumerate(slots):
         for retry in range(_SLOT_ATTEMPTS):
             attempt = slot * _SLOT_ATTEMPTS + retry
-            candidate_rows = tuple(
-                sorted(
-                    row_ids,
-                    key=lambda row_id: stable_order(
-                        f"{dataset.dataset_id}:{split}:qa:{slot}:{retry}:{row_id}",
-                        config.seed,
-                    ),
-                )[:row_size]
+            candidate_rows = row_ids.sample(
+                row_size,
+                identity=f"{dataset.dataset_id}:{split}:qa:{slot}:{retry}",
+                seed=config.seed,
             )
             operation = (
                 _filtered_argmax_operation(
