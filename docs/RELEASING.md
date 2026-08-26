@@ -8,7 +8,7 @@ source tables or research artifacts.
 - GitHub: `Sichao-Li/TableSuite-1K`
 - Hugging Face: `Lester1996/TableSuite-1K`
 - Python distribution and CLI: `tablesuite`
-- release tag: `v1.3.0`
+- release tag: `v2.0.0`
 
 The first Hub upload remains private until all six configurations pass the
 fresh-cache validation below. Add the associated paper citation when its
@@ -56,7 +56,7 @@ REPO='Lester1996/TableSuite-1K'
 hf repos create "$REPO" --repo-type dataset --private
 hf upload "$REPO" /path/to/huggingface-release . \
   --repo-type dataset \
-  --commit-message 'TableSuite-1K v1.3.0 release candidate'
+  --commit-message 'TableSuite-1K v2.0.0 release candidate'
 ```
 
 `hf upload` is resumable and is the current replacement for the deprecated
@@ -74,7 +74,7 @@ expected = {
     "table_prediction_tasks",
     "prediction_episodes",
     "grounding_tasks",
-    "cell_grounding",
+    "table_grounding",
     "table_question_answering",
 }
 assert set(get_dataset_config_names(repository)) == expected

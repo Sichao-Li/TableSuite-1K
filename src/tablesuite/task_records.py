@@ -21,16 +21,17 @@ from tablesuite.evaluation.operations import EXECUTOR_VERSION, validate_operatio
 from tablesuite.evaluation.rendering import GENERATOR_VERSION
 from tablesuite.types import DatasetSpec, TableSlice
 
-TaskConfig = Literal["cell_grounding", "table_question_answering"]
-TASK_RECORD_SCHEMA_VERSION = "1.0"
+TaskConfig = Literal["table_grounding", "table_question_answering"]
+TASK_RECORD_SCHEMA_VERSION = "2.0"
 
 _TASK_NAMES = {
-    "cell_grounding": "grounding",
+    "table_grounding": "grounding",
     "table_question_answering": "qa",
 }
-_QA_ARGUMENTS = (
+_OPERATION_ARGUMENTS = (
     "aggregation",
     "column",
+    "row_id",
     "filter_column",
     "filter_value_row_id",
     "maximize_column",
@@ -46,24 +47,14 @@ def public_task_record(plan: EvaluationPlan) -> dict[str, Any]:
         "dataset_id": plan.source.dataset_id,
         "evaluation_split": plan.evaluation_split,
         "render_seed": plan.rendering.render_seed,
+        "schema_language": plan.rendering.schema_language,
     }
     scoring = {
         "answer_type": plan.scoring.answer_type,
         "absolute_tolerance": plan.scoring.absolute_tolerance,
         "relative_tolerance": plan.scoring.relative_tolerance,
     }
-    if plan.task == "grounding":
-        if len(plan.source.row_ids) != 1 or plan.operation.name != "cell_lookup":
-            raise ValueError("cell grounding requires one source row and cell_lookup")
-        return {
-            **common,
-            "source_row_id": plan.source.row_ids[0],
-            "context_columns": list(plan.source.columns),
-            "answer_column": plan.operation.arguments["column"],
-            **scoring,
-            "template_split": plan.rendering.template_split,
-        }
-    if plan.task != "qa":
+    if plan.task not in {"grounding", "qa"}:
         raise ValueError(f"unsupported public task plan: {plan.task!r}")
     arguments = plan.operation.arguments
     return {
@@ -72,7 +63,7 @@ def public_task_record(plan: EvaluationPlan) -> dict[str, Any]:
         "source_columns": list(plan.source.columns),
         "operation": plan.operation.name,
         "operation_arguments": {
-            name: arguments.get(name) for name in _QA_ARGUMENTS
+            name: arguments.get(name) for name in _OPERATION_ARGUMENTS
         },
         **scoring,
         "template_split": plan.rendering.template_split,
@@ -175,6 +166,7 @@ def task_arrow_schema(name: TaskConfig) -> Any:
         pa.field("dataset_id", pa.string(), nullable=False),
         pa.field("evaluation_split", pa.string(), nullable=False),
         pa.field("render_seed", pa.int64(), nullable=False),
+        pa.field("schema_language", pa.string(), nullable=False),
     ]
     scoring = [
         pa.field("answer_type", pa.string(), nullable=False),
@@ -182,20 +174,10 @@ def task_arrow_schema(name: TaskConfig) -> Any:
         pa.field("relative_tolerance", pa.float64(), nullable=False),
         pa.field("template_split", pa.string(), nullable=False),
     ]
-    if name == "cell_grounding":
-        return pa.schema(
-            [
-                *common,
-                pa.field("source_row_id", pa.string(), nullable=False),
-                pa.field("context_columns", pa.list_(pa.string()), nullable=False),
-                pa.field("answer_column", pa.string(), nullable=False),
-                *scoring,
-            ]
-        )
-    if name != "table_question_answering":
+    if name not in _TASK_NAMES:
         raise ValueError(f"unsupported task configuration: {name!r}")
     operation_arguments = pa.struct(
-        [pa.field(field, pa.string()) for field in _QA_ARGUMENTS]
+        [pa.field(field, pa.string()) for field in _OPERATION_ARGUMENTS]
     )
     return pa.schema(
         [
@@ -235,33 +217,22 @@ def _task_plan(
             f"item {record['item_id']!r} declares split {evaluation_split!r}, "
             f"loaded from {split!r}"
         )
-    if name == "cell_grounding":
-        source = TableSlice(
-            dataset_id,
-            (str(record["source_row_id"]),),
-            tuple(str(value) for value in record["context_columns"]),
-        )
-        operation = OperationSpec(
-            "cell_lookup",
-            {"column": str(record["answer_column"])},
-        )
-    else:
-        source = TableSlice(
-            dataset_id,
-            tuple(str(value) for value in record["source_row_ids"]),
-            tuple(str(value) for value in record["source_columns"]),
-        )
-        raw_arguments = record.get("operation_arguments") or {}
-        if not isinstance(raw_arguments, Mapping):
-            raise TypeError("operation_arguments must be a mapping")
-        operation = OperationSpec(
-            str(record["operation"]),
-            {
-                str(key): str(value)
-                for key, value in raw_arguments.items()
-                if value is not None
-            },
-        )
+    source = TableSlice(
+        dataset_id,
+        tuple(str(value) for value in record["source_row_ids"]),
+        tuple(str(value) for value in record["source_columns"]),
+    )
+    raw_arguments = record.get("operation_arguments") or {}
+    if not isinstance(raw_arguments, Mapping):
+        raise TypeError("operation_arguments must be a mapping")
+    operation = OperationSpec(
+        str(record["operation"]),
+        {
+            str(key): str(value)
+            for key, value in raw_arguments.items()
+            if value is not None
+        },
+    )
     plan = EvaluationPlan(
         schema_version=PLAN_SCHEMA_VERSION,
         benchmark_version=BENCHMARK_VERSION,
@@ -278,6 +249,7 @@ def _task_plan(
             template_family=operation.name,
             template_split=str(record["template_split"]),
             render_seed=int(record["render_seed"]),
+            schema_language=str(record.get("schema_language") or "literal"),
         ),
         scoring=ScoringSpec(
             answer_type=str(record["answer_type"]),

@@ -1,6 +1,6 @@
 # Official Task Evaluation
 
-Status: **public task-record schema 1.0, released with TableSuite-1K v1.3.0**.
+Status: **public task-record schema 2.0, released with TableSuite-1K v2.0.0**.
 
 Users load ordinary Hugging Face configurations. The companion package joins
 each compact task row to `datasets`, resolves the referenced OpenML slice,
@@ -10,11 +10,12 @@ renders the model input, and computes gold programmatically.
 
 | Configuration | Model input | Gold source |
 | --- | --- | --- |
-| `cell_grounding` | one contextual row plus lookup question | exact source cell |
+| `table_grounding` | provided row/subtable plus typed question | displayed source slice |
 | `table_question_answering` | 4/8/16-row subtable plus typed question | deterministic table operation |
 
-Cell grounding uses 4-8 eligible non-target columns. Table QA uses 3-8
-columns and supports aggregate, argmax lookup, and filtered argmax lookup.
+Table grounding uses 4-8 eligible non-target columns and cell, row, or column
+operations. Table QA uses 3-8 columns and supports aggregate, argmax lookup,
+and filtered argmax lookup.
 Release authoring rejects missing operands, non-finite numeric values, empty
 filters, and tied maxima.
 
@@ -27,7 +28,7 @@ specifications = load_dataset(
     "Lester1996/TableSuite-1K",
     "table_question_answering",
     split="dataset_test",
-    revision="v1.3.0",
+    revision="v2.0.0",
 )
 print(specifications.column_names)
 print(specifications[0]["operation"])
@@ -47,7 +48,7 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v1.3.0",
+    revision="v2.0.0",
     dataset_ids=("openml_45069",),
 )
 
@@ -86,7 +87,7 @@ do not cross evaluation splits, and only `template_test` uses held-out wording.
 
 ## Reproducibility Boundary
 
-Per-item public rows freeze the source slice, semantic operation, scoring
+Per-item public rows freeze the source slice, typed operation, scoring
 tolerances, template split, and render seed. The tagged package fixes the
 operation executor, renderer, English language, Markdown view, missing-value
 policy, and tie policy. Release validation reconstructs every internal plan,
@@ -107,9 +108,9 @@ from tablesuite import generate_task
 
 task = generate_task(
     "Lester1996/TableSuite-1K",
-    "cell_grounding",
+    "table_grounding",
     source="openml-parquet",
-    revision="v1.3.0",
+    revision="v2.0.0",
     split="train",
     items_per_dataset=250,
     max_items=10_000,

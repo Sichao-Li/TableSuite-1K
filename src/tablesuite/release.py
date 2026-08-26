@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tablesuite.authoring import (
-    CELL_SPLITS,
+    GROUNDING_SPLITS,
     QA_SPLITS,
     TaskGenerationConfig,
     generate_task_plans,
@@ -34,10 +34,26 @@ from tablesuite.task_records import (
 )
 from tablesuite.types import Selection
 
-TASK_CONFIGS = ("cell_grounding", "table_question_answering")
+TASK_CONFIGS = ("table_grounding", "table_question_answering")
 RELEASE_CONFIGS = (*CONFIGS, *TASK_CONFIGS)
-RELEASE_VERSION = "1.3.0"
-REFERENCE_ID = "tablesuite-1k:1.3"
+RELEASE_VERSION = "2.0.0"
+REFERENCE_ID = "tablesuite-1k:2.0"
+_GROUNDING_OPERATION_NAMES = (
+    "cell_lookup",
+    "row_lookup",
+    "column_values",
+    "distinct_values",
+    "value_counts",
+)
+_QA_OPERATION_NAMES = (
+    "count",
+    "sum",
+    "mean",
+    "min",
+    "max",
+    "argmax_lookup",
+    "filtered_argmax_lookup",
+)
 
 
 def build_huggingface_release(
@@ -74,6 +90,8 @@ def build_huggingface_release(
         _validate_catalog_bindings(catalog, generated.plans)
         _require_release_coverage(generated.task_counts)
         _validate_value_free(generated.plans)
+        task_matrix = _task_matrix(generated.plans)
+        _validate_task_matrix(task_matrix)
         executed = _validate_execution(catalog, source, generated.plans)
 
         catalog_counts = _write_public_catalog(reference_path, staging)
@@ -87,7 +105,7 @@ def build_huggingface_release(
         public_audit.require_passed()
         _validate_catalog_bindings(public_catalog, public_plans)
         summary = {
-            "schema_version": "1.3",
+            "schema_version": "2.0",
             "release_version": RELEASE_VERSION,
             "release_kind": "value_free_huggingface_benchmark",
             "reference_id": public_catalog.reference_id,
@@ -99,6 +117,7 @@ def build_huggingface_release(
             "gold_answers_stored": False,
             "task_plans_executed": executed,
             "task_counts": generated.task_counts,
+            "task_matrix": task_matrix,
             "dataset_counts": generated.dataset_counts,
             "eligibility_skips": generated.skipped,
             "generation_config": policy.to_dict(),
@@ -221,7 +240,7 @@ def _write_public_catalog(
     if not isinstance(source_summary, dict):
         raise ValueError("reference summary must be a JSON object")
     reference_summary = {
-        "schema_version": "1.3",
+        "schema_version": "2.0",
         "release_version": RELEASE_VERSION,
         "reference_id": REFERENCE_ID,
         "source_provider": "openml",
@@ -437,11 +456,7 @@ def _write_task_configs(
         raise RuntimeError("install tablesuite[local] to author a release") from error
     grouped: dict[tuple[str, str], list[EvaluationPlan]] = defaultdict(list)
     for plan in plans:
-        task = (
-            "cell_grounding"
-            if plan.task == "grounding"
-            else "table_question_answering"
-        )
+        task = "table_grounding" if plan.task == "grounding" else "table_question_answering"
         grouped[(task, plan.evaluation_split)].append(plan)
     for (task, split), split_plans in sorted(grouped.items()):
         destination = root / "tasks" / task / split
@@ -605,7 +620,7 @@ def _nested_keys(value: Any) -> set[str]:
 
 def _require_release_coverage(task_counts: dict[str, dict[str, int]]) -> None:
     expected = {
-        "cell_grounding": CELL_SPLITS,
+        "table_grounding": GROUNDING_SPLITS,
         "table_question_answering": QA_SPLITS,
     }
     missing = [
@@ -616,6 +631,66 @@ def _require_release_coverage(task_counts: dict[str, dict[str, int]]) -> None:
     ]
     if missing:
         raise ValueError(f"release authoring produced empty official splits: {missing}")
+
+
+def _task_matrix(plans: tuple[EvaluationPlan, ...]) -> dict[str, Any]:
+    matrix: dict[str, Any] = {}
+    for task, internal in (
+        ("table_grounding", "grounding"),
+        ("table_question_answering", "qa"),
+    ):
+        selected = [plan for plan in plans if plan.task == internal]
+        by_operation: dict[str, int] = defaultdict(int)
+        by_row_size: dict[str, int] = defaultdict(int)
+        operation_row_sizes: dict[str, set[int]] = defaultdict(set)
+        schema_languages: dict[str, int] = defaultdict(int)
+        for plan in selected:
+            operation = (
+                plan.operation.arguments["aggregation"]
+                if plan.operation.name == "aggregate"
+                else plan.operation.name
+            )
+            row_size = len(plan.source.row_ids)
+            by_operation[operation] += 1
+            by_row_size[str(row_size)] += 1
+            operation_row_sizes[operation].add(row_size)
+            schema_languages[plan.rendering.schema_language] += 1
+        matrix[task] = {
+            "by_operation": dict(sorted(by_operation.items())),
+            "by_row_size": dict(sorted(by_row_size.items(), key=lambda item: int(item[0]))),
+            "operation_row_sizes": {
+                operation: sorted(sizes)
+                for operation, sizes in sorted(operation_row_sizes.items())
+            },
+            "schema_language": dict(sorted(schema_languages.items())),
+        }
+    return matrix
+
+
+def _validate_task_matrix(matrix: dict[str, Any]) -> None:
+    expected = {
+        "table_grounding": set(_GROUNDING_OPERATION_NAMES),
+        "table_question_answering": set(_QA_OPERATION_NAMES),
+    }
+    for task, operations in expected.items():
+        actual = set(matrix[task]["by_operation"])
+        if actual != operations:
+            raise ValueError(
+                f"{task} operation coverage mismatch: expected {sorted(operations)}, "
+                f"found {sorted(actual)}"
+            )
+        if matrix[task]["schema_language"] != {
+            "literal": sum(matrix[task]["by_operation"].values())
+        }:
+            raise ValueError(f"{task} contains unsupported schema-language conditions")
+        for operation, row_sizes in matrix[task]["operation_row_sizes"].items():
+            if operation == "cell_lookup":
+                if row_sizes != [1]:
+                    raise ValueError("cell_lookup must use exactly one visible row")
+            elif len(row_sizes) < 2:
+                raise ValueError(
+                    f"{task}/{operation} is confounded with one table size: {row_sizes}"
+                )
 
 
 def _load_release_plans(

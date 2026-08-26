@@ -13,6 +13,8 @@ import pytest
 from tablesuite import Benchmark, TableSlice, load_task
 from tablesuite._cli import main as cli_main
 from tablesuite.evaluation import (
+    BENCHMARK_VERSION,
+    PLAN_SCHEMA_VERSION,
     EvaluationPlan,
     MappingPredictionResolver,
     OperationSpec,
@@ -22,7 +24,10 @@ from tablesuite.evaluation import (
     ScoringSpec,
     audit_plans,
 )
+from tablesuite.evaluation.operations import EXECUTOR_VERSION, OperationResult
+from tablesuite.evaluation.rendering import GENERATOR_VERSION, render_evaluation_request
 from tablesuite.task_records import public_task_record
+from tablesuite.types import MaterializedTableSlice
 
 
 def test_plan_registry_round_trip_is_value_free(tmp_path: Path) -> None:
@@ -189,6 +194,66 @@ def test_qa_aggregate_and_argmax_operations(
     assert executor.materialize(argmax).gold.answer == 21
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        (OperationSpec("row_lookup", {"row_id": "1"}), {"Age": 21, "Income": 200}),
+        (OperationSpec("column_values", {"column": "Age"}), [20, 21]),
+        (OperationSpec("distinct_values", {"column": "Age"}), [20, 21]),
+        (
+            OperationSpec("value_counts", {"column": "Age"}),
+            [{"value": 20, "count": 1}, {"value": 21, "count": 1}],
+        ),
+    ],
+)
+def test_table_grounding_operations_are_closed_world(
+    benchmark_fixture: tuple[Path, Path],
+    operation: OperationSpec,
+    expected: object,
+) -> None:
+    reference, source = benchmark_fixture
+    plan = _plan(
+        plan_id=f"grounding_{operation.name}",
+        task="grounding",
+        source=TableSlice("openml_1", ("0", "1"), ("Age", "Income")),
+        operation=operation,
+        scoring=ScoringSpec("json"),
+    )
+    executor = PlanExecutor(
+        Benchmark.from_path(reference, source), PlanRegistry((plan,))
+    )
+
+    item = executor.materialize(plan)
+
+    assert item.gold.answer == expected
+    assert executor.score(plan, json.dumps(expected)).correct
+    assert all(
+        cell.row_id in plan.source.row_ids and cell.column in plan.source.columns
+        for cell in item.gold.evidence
+    )
+
+
+def test_rendered_questions_quote_ambiguous_column_names() -> None:
+    plan = _plan(
+        plan_id="grounding_numeric_header",
+        task="grounding",
+        source=TableSlice("openml_1", ("0",), ("1",)),
+        operation=OperationSpec("cell_lookup", {"column": "1"}),
+        scoring=ScoringSpec("integer"),
+    )
+    table = MaterializedTableSlice(plan.source, ({"1": 42},))
+    result = OperationResult(
+        answer=42,
+        evidence=(),
+        render_values={"column": "1"},
+    )
+
+    request = render_evaluation_request(plan, table, result)
+
+    assert '"1"' in request.question
+    assert "| row_id | 1 |" in request.table_text
+
+
 def test_prediction_and_integrated_plans_use_injected_packets(
     benchmark_fixture: tuple[Path, Path],
 ) -> None:
@@ -296,6 +361,30 @@ def test_plan_audit_rejects_untyped_literal_arguments() -> None:
     assert "filter_value_row_id" in audit.errors[0]
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        OperationSpec("cell_lookup", {"column": "Outside"}),
+        OperationSpec("row_lookup", {"row_id": "outside"}),
+    ],
+)
+def test_plan_audit_rejects_operation_references_outside_source(
+    operation: OperationSpec,
+) -> None:
+    plan = _plan(
+        plan_id=f"outside_{operation.name}",
+        task="grounding",
+        source=TableSlice("openml_1", ("0",), ("Age",)),
+        operation=operation,
+        scoring=ScoringSpec("json"),
+    )
+
+    audit = audit_plans((plan,))
+
+    assert not audit.passed
+    assert "outside the source slice" in audit.errors[0]
+
+
 def test_executor_rejects_catalog_binding_mismatch(
     benchmark_fixture: tuple[Path, Path],
 ) -> None:
@@ -355,11 +444,11 @@ def test_task_api_materializes_input_only_examples_and_reports_metrics(
         scoring=ScoringSpec("integer"),
     )
     PlanRegistry((first, second)).save(
-        reference / "tasks" / "cell_grounding" / "train.jsonl"
+        reference / "tasks" / "table_grounding" / "train.jsonl"
     )
     task = load_task(
         reference,
-        "cell_grounding",
+        "table_grounding",
         split="train",
         source=source,
     )
@@ -391,7 +480,7 @@ def test_task_cli_previews_and_scores(
         operation=OperationSpec("cell_lookup", {"column": "Age"}),
         scoring=ScoringSpec("integer"),
     )
-    plans_path = reference / "tasks" / "cell_grounding" / "train.jsonl"
+    plans_path = reference / "tasks" / "table_grounding" / "train.jsonl"
     PlanRegistry((plan,)).save(plans_path)
 
     cli_main(
@@ -402,7 +491,7 @@ def test_task_cli_previews_and_scores(
             "--source",
             str(source),
             "--name",
-            "cell_grounding",
+            "table_grounding",
             "--split",
             "train",
             "--dataset-id",
@@ -435,12 +524,12 @@ def test_load_task_can_filter_a_bounded_dataset_subset(
         scoring=ScoringSpec("integer"),
     )
     PlanRegistry((second,)).save(
-        reference / "tasks" / "cell_grounding" / "dataset_test.jsonl"
+        reference / "tasks" / "table_grounding" / "dataset_test.jsonl"
     )
 
     task = load_task(
         reference,
-        "cell_grounding",
+        "table_grounding",
         split="dataset_test",
         source=source,
         dataset_ids=("openml_2",),
@@ -451,7 +540,7 @@ def test_load_task_can_filter_a_bounded_dataset_subset(
     with pytest.raises(KeyError, match="unknown dataset IDs"):
         load_task(
             reference,
-            "cell_grounding",
+            "table_grounding",
             split="dataset_test",
             source=source,
             dataset_ids=("openml_missing",),
@@ -495,7 +584,7 @@ def test_load_task_uses_huggingface_configuration_and_split(
         calls.append((repository, name, split))
         if name == "datasets":
             return {"train": dataset_rows}
-        assert name == "cell_grounding"
+        assert name == "table_grounding"
         assert split == "train"
         return [plan.to_record() if legacy else public_task_record(plan)]
 
@@ -507,14 +596,14 @@ def test_load_task_uses_huggingface_configuration_and_split(
 
     task = load_task(
         "organization/openml-table-tasks",
-        "cell_grounding",
+        "table_grounding",
         split="train",
         source=source,
     )
 
     assert task[0].id == "hf_grounding_1"
     assert calls == [
-        ("organization/openml-table-tasks", "cell_grounding", "train"),
+        ("organization/openml-table-tasks", "table_grounding", "train"),
         ("organization/openml-table-tasks", "datasets", None),
     ]
 
@@ -534,8 +623,8 @@ def _plan(
     prediction_packet_id: str | None = None,
 ) -> EvaluationPlan:
     return EvaluationPlan(
-        schema_version="1.1",
-        benchmark_version="1.1",
+        schema_version=PLAN_SCHEMA_VERSION,
+        benchmark_version=BENCHMARK_VERSION,
         reference_id="tablesuite-1k:1.0",
         item_id=plan_id,
         task=task,
@@ -552,7 +641,7 @@ def _plan(
             view="markdown",
         ),
         scoring=scoring,
-        generator_version="1.0",
-        executor_version="1.0",
+        generator_version=GENERATOR_VERSION,
+        executor_version=EXECUTOR_VERSION,
         prediction_packet_id=prediction_packet_id,
     )

@@ -25,6 +25,10 @@ TemplateSplit = Literal["train", "test"]
 AnswerType = Literal["string", "integer", "float", "boolean", "json"]
 OperationName = Literal[
     "cell_lookup",
+    "row_lookup",
+    "column_values",
+    "distinct_values",
+    "value_counts",
     "aggregate",
     "argmax_lookup",
     "filtered_argmax_lookup",
@@ -32,11 +36,34 @@ OperationName = Literal[
     "prediction_with_cell",
 ]
 
-PLAN_SCHEMA_VERSION = "1.1"
-BENCHMARK_VERSION = "1.1"
+PLAN_SCHEMA_VERSION = "2.0"
+BENCHMARK_VERSION = "2.0.0"
+
+_OPERATIONS = frozenset(
+    {
+        "cell_lookup",
+        "row_lookup",
+        "column_values",
+        "distinct_values",
+        "value_counts",
+        "aggregate",
+        "argmax_lookup",
+        "filtered_argmax_lookup",
+        "prediction_lookup",
+        "prediction_with_cell",
+    }
+)
 
 _TASK_OPERATIONS: dict[str, frozenset[str]] = {
-    "grounding": frozenset({"cell_lookup"}),
+    "grounding": frozenset(
+        {
+            "cell_lookup",
+            "row_lookup",
+            "column_values",
+            "distinct_values",
+            "value_counts",
+        }
+    ),
     "qa": frozenset({"aggregate", "argmax_lookup", "filtered_argmax_lookup"}),
     "prediction": frozenset({"prediction_lookup"}),
     "integrated_reasoning": frozenset({"prediction_with_cell"}),
@@ -60,14 +87,7 @@ class OperationSpec:
     arguments: Mapping[str, str]
 
     def __post_init__(self) -> None:
-        if self.name not in {
-            "cell_lookup",
-            "aggregate",
-            "argmax_lookup",
-            "filtered_argmax_lookup",
-            "prediction_lookup",
-            "prediction_with_cell",
-        }:
+        if self.name not in _OPERATIONS:
             raise ValueError(f"unsupported operation: {self.name!r}")
         if any(
             not isinstance(key, str) or not isinstance(value, str)
@@ -90,6 +110,7 @@ class RenderingSpec:
     render_seed: int
     view: TextView = "markdown"
     language: str = "en"
+    schema_language: Literal["literal"] = "literal"
 
     def __post_init__(self) -> None:
         if not self.template_family:
@@ -100,6 +121,8 @@ class RenderingSpec:
             raise ValueError(f"unsupported table view: {self.view!r}")
         if self.language != "en":
             raise ValueError("the initial public renderer supports English only")
+        if self.schema_language != "literal":
+            raise ValueError("v2.0 publishes literal source-schema wording only")
 
 
 @dataclass(frozen=True)

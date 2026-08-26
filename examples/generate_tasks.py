@@ -15,7 +15,7 @@ def main() -> None:
     parser.add_argument("output", help="New directory for the value-free task bundle")
     parser.add_argument(
         "--name",
-        choices=["cell_grounding", "table_question_answering"],
+        choices=["table_grounding", "table_question_answering"],
         default="table_question_answering",
     )
     parser.add_argument("--dataset-id", action="append", default=[])

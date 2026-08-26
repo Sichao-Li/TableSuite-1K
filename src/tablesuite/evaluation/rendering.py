@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from tablesuite._util import canonical_json, stable_order
@@ -10,7 +11,7 @@ from tablesuite.evaluation.operations import OperationResult
 from tablesuite.rendering import render_table
 from tablesuite.types import MaterializedTableSlice
 
-GENERATOR_VERSION = "1.0"
+GENERATOR_VERSION = "2.0"
 
 _TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
     "cell_lookup": {
@@ -29,6 +30,54 @@ _TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
             "Read the {column} entry from the row in the table.",
             "Extract the value associated with {column}.",
             "What does this record list for {column}?",
+        ),
+    },
+    "row_lookup": {
+        "train": (
+            "Return row {row_id} as a JSON object using the displayed columns.",
+            "Read the complete record at {row_id} and return it as JSON.",
+        ),
+        "test": (
+            "What is the full displayed record for {row_id}? Return JSON.",
+            "Extract every shown field from {row_id} as one JSON object.",
+        ),
+    },
+    "column_values": {
+        "train": (
+            "Return every value in column {column}, in displayed row order, as JSON.",
+            "Read column {column} from top to bottom and return a JSON list.",
+        ),
+        "test": (
+            "List the displayed values of {column} in row order as JSON.",
+            "Extract the full visible {column} column as an ordered JSON list.",
+        ),
+    },
+    "distinct_values": {
+        "train": (
+            "Return the distinct values in column {column}, in first-occurrence "
+            "order, as a JSON list.",
+            "Which unique values occur in the displayed {column} column? Return "
+            "them in first-occurrence order as JSON.",
+        ),
+        "test": (
+            "List each distinct visible value of {column} once, preserving "
+            "first-occurrence order, as JSON.",
+            "What unique values appear in {column}? Return them in first-occurrence "
+            "order as JSON.",
+        ),
+    },
+    "value_counts": {
+        "train": (
+            "Count each distinct value in column {column}; return a JSON list of "
+            "objects with keys value and count, in first-occurrence order.",
+            "Return the visible value frequencies for {column} as value/count "
+            "objects in first-occurrence order.",
+        ),
+        "test": (
+            "What are the value counts in the displayed {column} column? Return "
+            "value/count objects in first-occurrence order.",
+            "Tabulate each unique {column} value and its count as a JSON list in "
+            "first-occurrence order.",
         ),
     },
     "aggregate": {
@@ -139,11 +188,17 @@ def render_evaluation_request(
         f"{plan.rendering.template_family}:{plan.rendering.template_split}:{template_index}"
     )
     values = {
-        key: _display(value)
+        key: _render_argument(plan, table, key, value)
         for key, value in result.render_values.items()
     }
     question = templates[template_index].format(**values)
-    table_text = render_table(table, view=plan.rendering.view)
+    if plan.scoring.answer_type == "json":
+        question += " Represent every displayed [missing] value as JSON null."
+    table_text = render_table(
+        table,
+        view=plan.rendering.view,
+        include_row_ids=True,
+    )
     sections = ["Table:", table_text]
     if result.prediction_context is not None:
         sections.extend(
@@ -170,3 +225,21 @@ def _display(value: Any) -> str:
     if isinstance(value, int | float):
         return str(value)
     return canonical_json(value)
+
+
+def _render_argument(
+    plan: EvaluationPlan,
+    table: MaterializedTableSlice,
+    key: str,
+    value: Any,
+) -> str:
+    if key == "column" or key.endswith("_column"):
+        return json.dumps(str(value), ensure_ascii=False)
+    if key == "row_id" or key.endswith("_row_id"):
+        try:
+            return f"r{table.source.row_ids.index(str(value))}"
+        except ValueError as error:
+            raise ValueError(
+                f"rendered row reference {value!r} is outside item {plan.item_id!r}"
+            ) from error
+    return _display(value)

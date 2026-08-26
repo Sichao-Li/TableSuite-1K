@@ -42,22 +42,24 @@ occurs in the visible support labels; regression episodes require finite
 support and query targets. Every protocol is inference-only. OpenML targets
 provide local evaluation targets, not permission to update model parameters.
 
-## Semantic Grounding
+## Provided-Table Grounding
 
-Cell grounding samples non-target, non-identifier feature cells with a
-deterministic column-balanced policy. Official task prompts show the selected
-cell inside a contextual one-row slice rather than presenting a bare value.
-Equivalent JSON, key-value, Markdown, and templated natural-language surfaces
-share one within-schema fact identity.
-The benchmark does not claim independently annotated cross-dataset ontology
-equivalence.
+Table grounding samples non-target, non-identifier feature slices with a
+deterministic operation-balanced policy. Cell lookup, row lookup, ordered
+column extraction, distinct-value extraction, and value counting are executed
+only over the table shown in the request. Static and runtime audits reject any
+operation or evidence reference outside that slice.
+
+V2 uses literal source headers and records `schema_language="literal"`.
+Paraphrased or mapped schema language requires a separately curated mapping
+and is not claimed by this release.
 
 ## Source Slices
 
 `TableSlice` provides uniform access to a source row or subtable. It is a data
 primitive, not an additional scored task. Serialized prediction uses a
-multi-row feature slice; ICL uses demonstration and query slices; cell
-grounding uses a contextual one-row slice. Task constructors control target
+multi-row feature slice; ICL uses demonstration and query slices; table
+grounding uses one- or multi-row source slices. Task constructors control target
 visibility so evaluation targets cannot enter model inputs.
 
 ## Partitions
@@ -74,9 +76,8 @@ then macro-averages across datasets. Regression reports per-dataset MAE, RMSE,
 R-squared, and scale-normalized errors before dataset-macro aggregation. ICL
 results are reported separately by shot count.
 
-Grounding reports bidirectional multi-positive Recall@1, Recall@5, and MRR,
-plus column accuracy, value accuracy, same-column/wrong-value errors, and
-same-value/wrong-column errors.
+Grounding reports exact typed-answer accuracy, parse-failure rate,
+dataset-macro accuracy, cluster-macro accuracy, and accuracy by operation.
 
 Every published result must include its saved `SelectionManifest`, reference
 revision, serialization version, shot count or table scope, and metric
@@ -84,7 +85,7 @@ aggregation version.
 
 ## Official Hugging Face Tasks
 
-TableSuite-1K publishes independently loadable cell-grounding and table-QA
+TableSuite-1K publishes independently loadable table-grounding and table-QA
 configurations. Each item freezes its semantic operation
 and source references while the package renders wording and computes gold only
 when accessed. Task specifications remain value-free and are audited for

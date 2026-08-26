@@ -7,6 +7,7 @@ from typing import Any
 
 from tablesuite.benchmark import Benchmark
 from tablesuite.evaluation.contracts import (
+    CellReference,
     EvaluationGold,
     EvaluationItem,
     EvaluationPlan,
@@ -104,6 +105,7 @@ class PlanExecutor:
             table,
             prediction_resolver=self.prediction_resolver,
         )
+        _validate_closed_world_evidence(resolved, result.evidence)
         request = render_evaluation_request(resolved, table, result)
         gold = EvaluationGold(
             item_id=resolved.item_id,
@@ -145,4 +147,21 @@ class PlanExecutor:
         if plan.executor_version != EXECUTOR_VERSION:
             raise ValueError(
                 f"unsupported executor version: {plan.executor_version!r}"
+            )
+
+
+def _validate_closed_world_evidence(
+    plan: EvaluationPlan,
+    evidence: tuple[CellReference, ...],
+) -> None:
+    allowed_rows = set(plan.source.row_ids)
+    allowed_columns = set(plan.source.columns)
+    for cell in evidence:
+        if (
+            cell.dataset_id != plan.source.dataset_id
+            or cell.row_id not in allowed_rows
+            or cell.column not in allowed_columns
+        ):
+            raise ValueError(
+                f"operation evidence for item {plan.item_id!r} escapes its source slice"
             )

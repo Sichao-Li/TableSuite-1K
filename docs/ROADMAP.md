@@ -1,7 +1,6 @@
 # Benchmark Roadmap
 
-The v1.3.0 protocol and task contracts remain frozen. The next benchmark work is
-ordered as follows:
+After the v2.0.0 protocol is frozen, benchmark extensions are ordered as follows:
 
 1. **Ablation**
    Isolate the contribution of table content, visible labels, interface format,
@@ -19,4 +18,4 @@ ordered as follows:
    Add equivalent Markdown, JSON, and key-value table renderings, including
    held-out-view transfer, without changing the underlying source fact or gold.
 
-These items are planned work and are not claims of the v1.3.0 release.
+These items are planned work and are not claims of v2.0.0.

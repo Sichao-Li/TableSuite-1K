@@ -16,7 +16,7 @@ def main() -> None:
     parser.add_argument(
         "name",
         choices=[
-            "cell_grounding",
+            "table_grounding",
             "table_question_answering",
         ],
     )

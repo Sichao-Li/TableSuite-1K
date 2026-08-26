@@ -29,15 +29,24 @@ from tablesuite.evaluation.rendering import GENERATOR_VERSION
 from tablesuite.source import ParquetSource
 from tablesuite.types import DatasetSpec, Selection, TableSlice
 
-CELL_SPLITS = (
+GROUNDING_SPLITS = (
     "train",
     "validation",
     "episode_test",
     "dataset_test",
     "template_test",
 )
-QA_SPLITS = (*CELL_SPLITS, "composition_test")
-TASK_NAMES = ("cell_grounding", "table_question_answering")
+QA_SPLITS = (*GROUNDING_SPLITS, "composition_test")
+TASK_NAMES = ("table_grounding", "table_question_answering")
+_GROUNDING_OPERATIONS = (
+    "cell_lookup",
+    "row_lookup",
+    "column_values",
+    "distinct_values",
+    "value_counts",
+)
+_BASE_QA_OPERATIONS = ("count", "sum", "mean", "min", "max", "argmax_lookup")
+_SLOT_ATTEMPTS = 80
 
 
 @dataclass(frozen=True)
@@ -45,37 +54,47 @@ class TaskGenerationConfig:
     """Frozen authoring policy for the first public task release."""
 
     seed: int = 0
-    cell_items_per_dataset: int = 32
-    cell_transfer_items_per_dataset: int = 16
+    grounding_items_per_dataset: int = 30
+    grounding_transfer_items_per_dataset: int = 15
     qa_items_per_dataset: int = 12
     qa_transfer_items_per_dataset: int = 6
-    min_cell_context_columns: int = 4
-    max_cell_context_columns: int = 8
+    min_grounding_context_columns: int = 4
+    max_grounding_context_columns: int = 8
     min_qa_context_columns: int = 3
     max_qa_context_columns: int = 8
+    grounding_row_sizes: tuple[int, ...] = (4, 8, 16)
     qa_row_sizes: tuple[int, ...] = (4, 8, 16)
     shard_size: int = 50_000
 
     def __post_init__(self) -> None:
         positive = (
-            "cell_items_per_dataset",
-            "cell_transfer_items_per_dataset",
+            "grounding_items_per_dataset",
+            "grounding_transfer_items_per_dataset",
             "qa_items_per_dataset",
             "qa_transfer_items_per_dataset",
-            "min_cell_context_columns",
-            "max_cell_context_columns",
+            "min_grounding_context_columns",
+            "max_grounding_context_columns",
             "min_qa_context_columns",
             "max_qa_context_columns",
             "shard_size",
         )
         if invalid := [name for name in positive if getattr(self, name) <= 0]:
             raise ValueError(f"generation limits must be positive: {invalid}")
-        if self.min_cell_context_columns > self.max_cell_context_columns:
-            raise ValueError("minimum cell context exceeds its maximum")
+        if self.min_grounding_context_columns > self.max_grounding_context_columns:
+            raise ValueError("minimum grounding context exceeds its maximum")
         if self.min_qa_context_columns > self.max_qa_context_columns:
             raise ValueError("minimum QA context exceeds its maximum")
+        if not self.grounding_row_sizes or any(
+            size < 2 for size in self.grounding_row_sizes
+        ):
+            raise ValueError("grounding row sizes must contain integers of at least two")
         if not self.qa_row_sizes or any(size < 2 for size in self.qa_row_sizes):
             raise ValueError("QA row sizes must contain integers of at least two")
+        object.__setattr__(
+            self,
+            "grounding_row_sizes",
+            tuple(sorted(set(self.grounding_row_sizes))),
+        )
         object.__setattr__(self, "qa_row_sizes", tuple(sorted(set(self.qa_row_sizes))))
 
     def to_dict(self) -> dict[str, Any]:
@@ -137,11 +156,11 @@ def generate_task_plans(
     }
     plans: list[EvaluationPlan] = []
     task_counts: dict[str, dict[str, int]] = {
-        "cell_grounding": defaultdict(int),
+        "table_grounding": defaultdict(int),
         "table_question_answering": defaultdict(int),
     }
     dataset_sets: dict[str, dict[str, set[str]]] = {
-        "cell_grounding": defaultdict(set),
+        "table_grounding": defaultdict(set),
         "table_question_answering": defaultdict(set),
     }
     skipped: dict[str, int] = defaultdict(int)
@@ -159,10 +178,10 @@ def generate_task_plans(
         for split, row_ids in _evaluation_pools(dataset, len(rows), config.seed).items():
             if requested_splits and split not in requested_splits:
                 continue
-            cell_limit = _limit_for_split(
+            grounding_limit = _limit_for_split(
                 split,
-                config.cell_items_per_dataset,
-                config.cell_transfer_items_per_dataset,
+                config.grounding_items_per_dataset,
+                config.grounding_transfer_items_per_dataset,
             )
             qa_limit = _limit_for_split(
                 split,
@@ -170,28 +189,30 @@ def generate_task_plans(
                 config.qa_transfer_items_per_dataset,
             )
             if (
-                "cell_grounding" in requested_tasks
-                and split in CELL_SPLITS
-                and len(columns) >= config.min_cell_context_columns
+                "table_grounding" in requested_tasks
+                and split in GROUNDING_SPLITS
+                and len(columns) >= config.min_grounding_context_columns
             ):
-                generated = _cell_plans(
+                generated = _grounding_plans(
                     catalog.reference_id,
                     dataset,
                     rows,
                     columns,
                     row_ids,
                     split,
-                    cell_limit,
+                    grounding_limit,
                     config,
                 )
                 plans.extend(generated)
-                task_counts["cell_grounding"][split] += len(generated)
+                task_counts["table_grounding"][split] += len(generated)
                 if generated:
-                    dataset_sets["cell_grounding"][split].add(dataset.dataset_id)
-                if len(generated) < cell_limit:
-                    skipped[f"cell_shortfall:{split}"] += cell_limit - len(generated)
-            elif "cell_grounding" in requested_tasks and split in CELL_SPLITS:
-                skipped[f"cell_too_narrow:{split}"] += 1
+                    dataset_sets["table_grounding"][split].add(dataset.dataset_id)
+                if len(generated) < grounding_limit:
+                    skipped[f"grounding_shortfall:{split}"] += (
+                        grounding_limit - len(generated)
+                    )
+            elif "table_grounding" in requested_tasks and split in GROUNDING_SPLITS:
+                skipped[f"grounding_too_narrow:{split}"] += 1
 
             if "table_question_answering" in requested_tasks and split in QA_SPLITS:
                 generated = _qa_plans(
@@ -219,7 +240,11 @@ def generate_task_plans(
     normalized_counts = {
         task: {split: int(counts.get(split, 0)) for split in splits}
         for task, counts, splits in (
-            ("cell_grounding", task_counts["cell_grounding"], CELL_SPLITS),
+            (
+                "table_grounding",
+                task_counts["table_grounding"],
+                GROUNDING_SPLITS,
+            ),
             (
                 "table_question_answering",
                 task_counts["table_question_answering"],
@@ -230,7 +255,7 @@ def generate_task_plans(
     dataset_counts = {
         task: {split: len(dataset_sets[task].get(split, set())) for split in splits}
         for task, splits in (
-            ("cell_grounding", CELL_SPLITS),
+            ("table_grounding", GROUNDING_SPLITS),
             ("table_question_answering", QA_SPLITS),
         )
     }
@@ -287,7 +312,7 @@ def _eligible_columns(
     )
 
 
-def _cell_plans(
+def _grounding_plans(
     reference_id: str,
     dataset: DatasetSpec,
     rows: list[dict[str, Any]],
@@ -297,52 +322,148 @@ def _cell_plans(
     limit: int,
     config: TaskGenerationConfig,
 ) -> tuple[EvaluationPlan, ...]:
-    by_column = {
-        column: tuple(
-            row_id
-            for row_id in row_ids
-            if stable_value_key(rows[int(row_id)][column]) != "<missing>"
-        )
-        for column in columns
-    }
-    column_order = sorted(
-        columns,
-        key=lambda column: stable_order(
-            f"{dataset.dataset_id}:{split}:cell:{column}", config.seed
-        ),
+    available_sizes = tuple(
+        size for size in config.grounding_row_sizes if size <= len(row_ids)
     )
+    if not available_sizes:
+        return ()
     selected: list[EvaluationPlan] = []
-    depth = 0
-    while len(selected) < limit and any(depth < len(by_column[col]) for col in column_order):
-        for column in column_order:
-            if depth >= len(by_column[column]) or len(selected) >= limit:
+    seen: set[str] = set()
+    slots = _grounding_slots(
+        dataset.dataset_id,
+        split,
+        available_sizes,
+        limit,
+        config.seed,
+    )
+    for slot, (row_size, operation_name) in enumerate(slots):
+        for retry in range(_SLOT_ATTEMPTS):
+            attempt = slot * _SLOT_ATTEMPTS + retry
+            requested_rows = 1 if operation_name == "cell_lookup" else row_size
+            candidate_rows = tuple(
+                sorted(
+                    row_ids,
+                    key=lambda row_id: stable_order(
+                        f"{dataset.dataset_id}:{split}:grounding:{slot}:{retry}:{row_id}",
+                        config.seed,
+                    ),
+                )[:requested_rows]
+            )
+            operation = _grounding_operation(
+                rows,
+                columns,
+                candidate_rows,
+                operation_name,
+                attempt,
+                config.seed,
+            )
+            if operation is None:
                 continue
-            row_id = by_column[column][depth]
+            spec, scoring, required = operation
             context = _context_columns(
                 dataset,
                 columns,
-                (column,),
-                config.max_cell_context_columns,
-                f"{split}:cell:{row_id}:{column}",
+                required,
+                config.max_grounding_context_columns,
+                f"{split}:grounding:{slot}:{retry}:{spec.name}",
                 config.seed,
             )
-            if len(context) < config.min_cell_context_columns:
+            if len(context) < config.min_grounding_context_columns:
                 continue
-            value = rows[int(row_id)][column]
+            identity = canonical_json(
+                [
+                    split,
+                    dataset.dataset_id,
+                    candidate_rows,
+                    context,
+                    spec.name,
+                    dict(spec.arguments),
+                ]
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
             selected.append(
                 _plan(
                     reference_id=reference_id,
                     dataset=dataset,
                     split=split,
-                    source=TableSlice(dataset.dataset_id, (row_id,), context),
-                    operation=OperationSpec("cell_lookup", {"column": column}),
-                    scoring=_scoring_for_value(value),
-                    identity=("cell", split, dataset.dataset_id, row_id, column, context),
+                    source=TableSlice(dataset.dataset_id, candidate_rows, context),
+                    operation=spec,
+                    scoring=scoring,
+                    identity=("grounding", identity),
                     seed=config.seed,
                 )
             )
-        depth += 1
+            break
     return tuple(selected)
+
+
+def _grounding_slots(
+    dataset_id: str,
+    split: EvaluationSplit,
+    row_sizes: tuple[int, ...],
+    limit: int,
+    seed: int,
+) -> tuple[tuple[int, str], ...]:
+    """Schedule grounding operation and visible-table size independently."""
+
+    operations = tuple(
+        sorted(
+            _GROUNDING_OPERATIONS,
+            key=lambda name: stable_order(
+                f"{dataset_id}:{split}:grounding:operation:{name}", seed
+            ),
+        )
+    )
+    sizes = tuple(
+        sorted(
+            row_sizes,
+            key=lambda size: stable_order(
+                f"{dataset_id}:{split}:grounding:row-size:{size}", seed
+            ),
+        )
+    )
+    return _balanced_slots(operations, sizes, limit)
+
+
+def _grounding_operation(
+    rows: list[dict[str, Any]],
+    columns: tuple[str, ...],
+    row_ids: tuple[str, ...],
+    operation: str,
+    attempt: int,
+    seed: int,
+) -> tuple[OperationSpec, ScoringSpec, tuple[str, ...]] | None:
+    ordered_columns = tuple(
+        sorted(
+            columns,
+            key=lambda column: stable_order(
+                f"grounding:{operation}:{attempt}:{column}", seed
+            ),
+        )
+    )
+    if operation == "row_lookup":
+        row_id = row_ids[attempt % len(row_ids)]
+        return OperationSpec(operation, {"row_id": row_id}), ScoringSpec("json"), ()
+    column = ordered_columns[attempt % len(ordered_columns)]
+    if operation == "cell_lookup":
+        row_id = row_ids[0]
+        value = rows[int(row_id)][column]
+        if stable_value_key(value) == "<missing>":
+            return None
+        return (
+            OperationSpec(operation, {"column": column}),
+            _scoring_for_value(value),
+            (column,),
+        )
+    if operation in {"column_values", "distinct_values", "value_counts"}:
+        return (
+            OperationSpec(operation, {"column": column}),
+            ScoringSpec("json"),
+            (column,),
+        )
+    raise ValueError(f"unsupported grounding operation: {operation!r}")
 
 
 def _qa_plans(
@@ -359,65 +480,136 @@ def _qa_plans(
         return ()
     selected: list[EvaluationPlan] = []
     seen: set[str] = set()
-    attempts = max(100, limit * 80)
-    for attempt in range(attempts):
-        if len(selected) >= limit:
-            break
-        available_sizes = tuple(size for size in config.qa_row_sizes if size <= len(row_ids))
-        if not available_sizes:
-            break
-        row_size = available_sizes[attempt % len(available_sizes)]
-        candidate_rows = tuple(
-            sorted(
-                row_ids,
-                key=lambda row_id: stable_order(
-                    f"{dataset.dataset_id}:{split}:qa:{attempt}:{row_id}", config.seed
-                ),
-            )[:row_size]
-        )
-        operation = (
-            _filtered_argmax_operation(rows, columns, candidate_rows, attempt, config.seed)
-            if split == "composition_test"
-            else _base_qa_operation(rows, columns, candidate_rows, attempt, config.seed)
-        )
-        if operation is None:
-            continue
-        spec, scoring, required = operation
-        context = _context_columns(
-            dataset,
-            columns,
-            required,
-            config.max_qa_context_columns,
-            f"{split}:qa:{attempt}:{spec.name}",
-            config.seed,
-        )
-        if len(context) < config.min_qa_context_columns:
-            continue
-        identity = canonical_json(
-            [split, dataset.dataset_id, candidate_rows, context, spec.name, dict(spec.arguments)]
-        )
-        if identity in seen:
-            continue
-        seen.add(identity)
-        selected.append(
-            _plan(
-                reference_id=reference_id,
-                dataset=dataset,
-                split=split,
-                source=TableSlice(dataset.dataset_id, candidate_rows, context),
-                operation=spec,
-                scoring=scoring,
-                identity=("qa", identity),
-                seed=config.seed,
+    available_sizes = tuple(size for size in config.qa_row_sizes if size <= len(row_ids))
+    if not available_sizes:
+        return ()
+    slots = _qa_slots(
+        dataset.dataset_id,
+        split,
+        available_sizes,
+        limit,
+        config.seed,
+    )
+    for slot, (row_size, operation_name) in enumerate(slots):
+        for retry in range(_SLOT_ATTEMPTS):
+            attempt = slot * _SLOT_ATTEMPTS + retry
+            candidate_rows = tuple(
+                sorted(
+                    row_ids,
+                    key=lambda row_id: stable_order(
+                        f"{dataset.dataset_id}:{split}:qa:{slot}:{retry}:{row_id}",
+                        config.seed,
+                    ),
+                )[:row_size]
             )
-        )
+            operation = (
+                _filtered_argmax_operation(
+                    rows, columns, candidate_rows, attempt, config.seed
+                )
+                if operation_name == "filtered_argmax_lookup"
+                else _base_qa_operation(
+                    rows,
+                    columns,
+                    candidate_rows,
+                    operation_name,
+                    attempt,
+                    config.seed,
+                )
+            )
+            if operation is None:
+                continue
+            spec, scoring, required = operation
+            context = _context_columns(
+                dataset,
+                columns,
+                required,
+                config.max_qa_context_columns,
+                f"{split}:qa:{slot}:{retry}:{spec.name}",
+                config.seed,
+            )
+            if len(context) < config.min_qa_context_columns:
+                continue
+            identity = canonical_json(
+                [
+                    split,
+                    dataset.dataset_id,
+                    candidate_rows,
+                    context,
+                    spec.name,
+                    dict(spec.arguments),
+                ]
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            selected.append(
+                _plan(
+                    reference_id=reference_id,
+                    dataset=dataset,
+                    split=split,
+                    source=TableSlice(dataset.dataset_id, candidate_rows, context),
+                    operation=spec,
+                    scoring=scoring,
+                    identity=("qa", identity),
+                    seed=config.seed,
+                )
+            )
+            break
     return tuple(selected)
+
+
+def _qa_slots(
+    dataset_id: str,
+    split: EvaluationSplit,
+    row_sizes: tuple[int, ...],
+    limit: int,
+    seed: int,
+) -> tuple[tuple[int, str], ...]:
+    """Schedule QA operation and visible-table size independently."""
+
+    operations = (
+        ("filtered_argmax_lookup",)
+        if split == "composition_test"
+        else _BASE_QA_OPERATIONS
+    )
+    operations = tuple(
+        sorted(
+            operations,
+            key=lambda name: stable_order(
+                f"{dataset_id}:{split}:qa:operation:{name}", seed
+            ),
+        )
+    )
+    sizes = tuple(
+        sorted(
+            row_sizes,
+            key=lambda size: stable_order(
+                f"{dataset_id}:{split}:qa:row-size:{size}", seed
+            ),
+        )
+    )
+    return _balanced_slots(operations, sizes, limit)
+
+
+def _balanced_slots(
+    operations: tuple[str, ...],
+    sizes: tuple[int, ...],
+    limit: int,
+) -> tuple[tuple[int, str], ...]:
+    return tuple(
+        (
+            sizes[((slot % len(operations)) + slot // len(operations)) % len(sizes)],
+            operations[slot % len(operations)],
+        )
+        for slot in range(limit)
+    )
 
 
 def _base_qa_operation(
     rows: list[dict[str, Any]],
     columns: tuple[str, ...],
     row_ids: tuple[str, ...],
+    operation: str,
     attempt: int,
     seed: int,
 ) -> tuple[OperationSpec, ScoringSpec, tuple[str, ...]] | None:
@@ -427,8 +619,10 @@ def _base_qa_operation(
     numeric = tuple(
         sorted(numeric, key=lambda column: stable_order(f"qa:{attempt}:{column}", seed))
     )
-    if attempt % 2 == 0:
-        aggregation = ("count", "sum", "mean", "min", "max")[(attempt // 2) % 5]
+    if operation != "argmax_lookup":
+        if operation not in _BASE_QA_OPERATIONS:
+            raise ValueError(f"unsupported base QA operation: {operation}")
+        aggregation = operation
         column = numeric[attempt % len(numeric)]
         values = [rows[int(row_id)][column] for row_id in row_ids]
         answer = _aggregate_for_scoring(values, aggregation)
@@ -647,7 +841,7 @@ def _plan(
         benchmark_version=BENCHMARK_VERSION,
         reference_id=reference_id,
         item_id=item_id,
-        task="grounding" if operation.name == "cell_lookup" else "qa",
+        task="grounding" if operation.name in _GROUNDING_OPERATIONS else "qa",
         evaluation_split=split,
         dataset_split=dataset.dataset_split,
         dedup_cluster_id=dataset.dedup_cluster_id,

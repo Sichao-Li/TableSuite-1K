@@ -114,10 +114,18 @@ def render_table(
     table: MaterializedTableSlice,
     *,
     view: TextView,
+    include_row_ids: bool = False,
 ) -> str:
     """Render one materialized row or subtable in a deterministic view."""
 
-    return _render_rows(list(table.rows), list(table.source.columns), view)
+    if not include_row_ids:
+        return _render_rows(list(table.rows), list(table.source.columns), view)
+    row_column = _row_id_column(table.source.columns)
+    rows = [
+        {row_column: f"r{index}", **row}
+        for index, row in enumerate(table.rows)
+    ]
+    return _render_rows(rows, [row_column, *table.source.columns], view)
 
 
 def _alias_rows(
@@ -187,3 +195,10 @@ def _display(value: Any) -> str:
 
 def _escape(value: str) -> str:
     return value.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def _row_id_column(columns: tuple[str, ...]) -> str:
+    candidate = "row_id"
+    while candidate in columns:
+        candidate = f"_{candidate}"
+    return candidate

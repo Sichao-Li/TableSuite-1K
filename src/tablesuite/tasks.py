@@ -29,12 +29,12 @@ from tablesuite.task_records import (
 from tablesuite.types import TableSlice
 
 TaskName = Literal[
-    "cell_grounding",
+    "table_grounding",
     "table_question_answering",
 ]
 
 _TASK_TYPES: dict[TaskName, EvaluationTask] = {
-    "cell_grounding": "grounding",
+    "table_grounding": "grounding",
     "table_question_answering": "qa",
 }
 

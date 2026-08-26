@@ -27,11 +27,11 @@ from tablesuite.types import Selection, TaskFamily
 GENERATION_SCHEMA_VERSION = "1.0"
 
 _TASK_DEFAULTS: dict[TaskName, int] = {
-    "cell_grounding": 32,
+    "table_grounding": 30,
     "table_question_answering": 12,
 }
 _INTERNAL_TASKS = {
-    "cell_grounding": "grounding",
+    "table_grounding": "grounding",
     "table_question_answering": "qa",
 }
 _SPLITS = {
@@ -164,7 +164,7 @@ def generate_task(
 
     if name not in _TASK_DEFAULTS:
         raise ValueError(f"unsupported generated task: {name!r}")
-    if name == "cell_grounding" and split == "composition_test":
+    if name == "table_grounding" and split == "composition_test":
         raise ValueError("composition_test is only defined for table question answering")
     resolved_items = _TASK_DEFAULTS[name] if items_per_dataset is None else items_per_dataset
     if resolved_items <= 0:
@@ -193,8 +193,8 @@ def generate_task(
         source_store,
         TaskGenerationConfig(
             seed=seed,
-            cell_items_per_dataset=resolved_items,
-            cell_transfer_items_per_dataset=resolved_items,
+            grounding_items_per_dataset=resolved_items,
+            grounding_transfer_items_per_dataset=resolved_items,
             qa_items_per_dataset=resolved_items,
             qa_transfer_items_per_dataset=resolved_items,
         ),

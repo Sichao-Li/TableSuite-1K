@@ -18,9 +18,65 @@ from tablesuite import (
     load_task,
 )
 from tablesuite._cli import main as cli_main
+from tablesuite.authoring import _grounding_slots, _qa_slots
 from tablesuite.evaluation import PlanExecutor, audit_plans
 from tablesuite.release import TaskGenerationConfig, build_huggingface_release
 from tablesuite.task_records import read_task_records, task_registry
+
+
+def test_grounding_schedule_balances_operations_and_context_sizes() -> None:
+    slots = _grounding_slots(
+        "openml_1",
+        "validation",
+        (4, 8, 16),
+        15,
+        0,
+    )
+
+    operations = [operation for _, operation in slots]
+    row_sizes = [row_size for row_size, _ in slots]
+    assert {operation: operations.count(operation) for operation in set(operations)} == {
+        "cell_lookup": 3,
+        "column_values": 3,
+        "distinct_values": 3,
+        "row_lookup": 3,
+        "value_counts": 3,
+    }
+    assert {size: row_sizes.count(size) for size in set(row_sizes)} == {
+        4: 5,
+        8: 5,
+        16: 5,
+    }
+
+
+def test_qa_schedule_balances_operation_and_row_size_independently() -> None:
+    slots = _qa_slots(
+        "openml_1",
+        "validation",
+        (4, 8, 16),
+        12,
+        0,
+    )
+
+    operations = [operation for _, operation in slots]
+    row_sizes = [row_size for row_size, _ in slots]
+    assert {operation: operations.count(operation) for operation in set(operations)} == {
+        "argmax_lookup": 2,
+        "count": 2,
+        "max": 2,
+        "mean": 2,
+        "min": 2,
+        "sum": 2,
+    }
+    assert {size: row_sizes.count(size) for size in set(row_sizes)} == {
+        4: 4,
+        8: 4,
+        16: 4,
+    }
+    assert all(
+        len({size for size, candidate in slots if candidate == operation}) == 2
+        for operation in set(operations)
+    )
 
 
 def test_release_builder_is_deterministic_value_free_and_executable(
@@ -30,11 +86,11 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     card = Path(__file__).parents[1] / "huggingface" / "README.md"
     config = TaskGenerationConfig(
         seed=17,
-        cell_items_per_dataset=4,
-        cell_transfer_items_per_dataset=2,
-        qa_items_per_dataset=4,
-        qa_transfer_items_per_dataset=2,
-        max_cell_context_columns=4,
+        grounding_items_per_dataset=5,
+        grounding_transfer_items_per_dataset=5,
+        qa_items_per_dataset=12,
+        qa_transfer_items_per_dataset=6,
+        max_grounding_context_columns=4,
         max_qa_context_columns=4,
         qa_row_sizes=(4, 8),
         shard_size=3,
@@ -59,6 +115,24 @@ def test_release_builder_is_deterministic_value_free_and_executable(
 
     assert first_summary["passed"]
     assert first_summary["task_counts"] == second_summary["task_counts"]
+    assert set(first_summary["task_matrix"]["table_grounding"]["by_operation"]) == {
+        "cell_lookup",
+        "column_values",
+        "distinct_values",
+        "row_lookup",
+        "value_counts",
+    }
+    assert set(
+        first_summary["task_matrix"]["table_question_answering"]["by_operation"]
+    ) == {
+        "argmax_lookup",
+        "count",
+        "filtered_argmax_lookup",
+        "max",
+        "mean",
+        "min",
+        "sum",
+    }
     assert (first / "README.md").is_file()
     assert (first / "datasets" / "train" / "part-00000.parquet").is_file()
     assert not (first / "metadata").exists()
@@ -70,7 +144,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "prediction_episodes": 3,
         "table_prediction_tasks": 3,
     }
-    assert first_summary["release_version"] == "1.3.0"
+    assert first_summary["release_version"] == "2.0.0"
     reference_summary = json.loads(
         (first / "reference_summary.json").read_text(encoding="utf-8")
     )
@@ -83,17 +157,17 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "schema_version",
         "source_provider",
     }
-    assert reference_summary["release_version"] == "1.3.0"
+    assert reference_summary["release_version"] == "2.0.0"
     assert reference_summary["record_schemas"] == {
         "catalog": "1.0",
-        "official_tasks": "1.0",
+        "official_tasks": "2.0",
     }
     assert set(get_dataset_config_names(str(first))) == {
         "datasets",
         "table_prediction_tasks",
         "prediction_episodes",
         "grounding_tasks",
-        "cell_grounding",
+        "table_grounding",
         "table_question_answering",
     }
     table_prediction_splits = load_dataset(
@@ -170,11 +244,11 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     ]
     hub_rows = load_dataset(
         str(first),
-        "cell_grounding",
+        "table_grounding",
         split="dataset_test",
         cache_dir=str(tmp_path / "hf-cache"),
     )
-    assert len(hub_rows) == first_summary["task_counts"]["cell_grounding"][
+    assert len(hub_rows) == first_summary["task_counts"]["table_grounding"][
         "dataset_test"
     ]
     assert hub_rows.column_names == [
@@ -182,9 +256,11 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "dataset_id",
         "evaluation_split",
         "render_seed",
-        "source_row_id",
-        "context_columns",
-        "answer_column",
+        "schema_language",
+        "source_row_ids",
+        "source_columns",
+        "operation",
+        "operation_arguments",
         "answer_type",
         "absolute_tolerance",
         "relative_tolerance",
@@ -201,6 +277,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "dataset_id",
         "evaluation_split",
         "render_seed",
+        "schema_language",
         "source_row_ids",
         "source_columns",
         "operation",
@@ -213,6 +290,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert set(qa_rows[0]["operation_arguments"]) == {
         "aggregation",
         "column",
+        "row_id",
         "filter_column",
         "filter_value_row_id",
         "maximize_column",
@@ -224,15 +302,21 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert first_plans == second_plans
     assert audit_plans(first_plans).passed
 
-    cell_plans = [plan for plan in first_plans if plan.task == "grounding"]
+    grounding_plans = [plan for plan in first_plans if plan.task == "grounding"]
     qa_plans = [plan for plan in first_plans if plan.task == "qa"]
-    assert cell_plans
+    assert grounding_plans
     assert qa_plans
-    assert all(len(plan.source.columns) > 1 for plan in cell_plans)
-    assert all(plan.operation.arguments["column"] in plan.source.columns for plan in cell_plans)
+    assert all(len(plan.source.columns) > 1 for plan in grounding_plans)
+    assert {plan.operation.name for plan in grounding_plans} == {
+        "cell_lookup",
+        "column_values",
+        "distinct_values",
+        "row_lookup",
+        "value_counts",
+    }
     assert all("Target" not in plan.source.columns for plan in first_plans)
     assert {
-        plan.evaluation_split for plan in cell_plans
+        plan.evaluation_split for plan in grounding_plans
     } == {"train", "validation", "episode_test", "dataset_test", "template_test"}
     assert {
         plan.evaluation_split for plan in qa_plans
@@ -259,13 +343,13 @@ def test_release_builder_is_deterministic_value_free_and_executable(
 
     grounding = load_task(
         first,
-        "cell_grounding",
+        "table_grounding",
         split="dataset_test",
         source=source,
     )
     grounding_registry = _load_registry(
         first,
-        "cell_grounding",
+        "table_grounding",
         "dataset_test",
     )
     grounding_plan = grounding_registry.get_plan(grounding.ids[0])
@@ -308,16 +392,18 @@ def test_release_cli_builds_and_validates(tmp_path: Path, capsys) -> None:
             str(card),
             "--output",
             str(output),
-            "--cell-items-per-dataset",
-            "2",
-            "--cell-transfer-items-per-dataset",
-            "1",
+            "--grounding-items-per-dataset",
+            "5",
+            "--grounding-transfer-items-per-dataset",
+            "5",
             "--qa-items-per-dataset",
-            "2",
+            "12",
             "--qa-transfer-items-per-dataset",
-            "1",
+            "6",
             "--qa-row-size",
             "4",
+            "--qa-row-size",
+            "8",
         ]
     )
     assert json.loads(capsys.readouterr().out)["passed"]
@@ -341,7 +427,7 @@ def test_generated_task_uses_the_standard_task_interface(tmp_path: Path) -> None
 
     first = generate_task(
         reference,
-        "cell_grounding",
+        "table_grounding",
         split="train",
         source=source,
         dataset_ids=("openml_101",),
@@ -351,7 +437,7 @@ def test_generated_task_uses_the_standard_task_interface(tmp_path: Path) -> None
     )
     second = generate_task(
         reference,
-        "cell_grounding",
+        "table_grounding",
         split="train",
         source=source,
         dataset_ids=("openml_101",),
@@ -365,7 +451,7 @@ def test_generated_task_uses_the_standard_task_interface(tmp_path: Path) -> None
     assert first.ids == second.ids
     assert first[0].prompt == second[0].prompt
     assert first.manifest.origin == "generated"
-    assert first.manifest.task == "cell_grounding"
+    assert first.manifest.task == "table_grounding"
     assert first.manifest.dataset_ids == ("openml_101",)
     assert first.manifest.generated_items == 3
     assert first.manifest.plan_fingerprint == second.manifest.plan_fingerprint
@@ -434,7 +520,7 @@ def test_generate_cli_writes_a_reusable_bundle(tmp_path: Path, capsys) -> None:
 def _load_all_plans(root: Path) -> tuple:
     catalog = Catalog.from_path(root)
     plans = []
-    for task in ("cell_grounding", "table_question_answering"):
+    for task in ("table_grounding", "table_question_answering"):
         for split in sorted((root / "tasks" / task).iterdir()):
             plans.extend(
                 task_registry(

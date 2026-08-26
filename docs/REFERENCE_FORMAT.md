@@ -1,6 +1,6 @@
 # Hugging Face Reference Format
 
-TableSuite-1K v1.3.0 contains six value-free Parquet configurations. The
+TableSuite-1K v2.0.0 contains six value-free Parquet configurations. The
 `datasets` configuration is the canonical metadata table; every other
 configuration joins to it by `dataset_id`.
 
@@ -85,24 +85,27 @@ The official tasks freeze semantic operations and source references. Wording
 and gold are generated from the referenced source table only when an item is
 loaded.
 
-### `cell_grounding`
+### `table_grounding`
 
 ```text
 item_id
 dataset_id
 evaluation_split
 render_seed
-source_row_id
-context_columns
-answer_column
+schema_language
+source_row_ids
+source_columns
+operation
+operation_arguments
 answer_type
 absolute_tolerance
 relative_tolerance
 template_split
 ```
 
-Each item shows one contextual row and asks for the exact value at
-`source_row_id` and `answer_column`.
+`operation` is one of `cell_lookup`, `row_lookup`, `column_values`,
+`distinct_values`, or `value_counts`. All referenced rows and columns are
+members of the displayed source slice. `schema_language` is `literal` in v2.0.
 
 ### `table_question_answering`
 
@@ -111,6 +114,7 @@ item_id
 dataset_id
 evaluation_split
 render_seed
+schema_language
 source_row_ids
 source_columns
 operation
@@ -127,6 +131,7 @@ template_split
 ```text
 aggregation
 column
+row_id
 filter_column
 filter_value_row_id
 maximize_column
@@ -139,15 +144,10 @@ itself is not copied into the public plan.
 
 ## Why The Rows Are Compact
 
-Earlier releases embedded internal plan objects in every task row. v1.3.0
-keeps only item-specific public fields. Dataset partition, deduplication
-cluster, OpenML identity, and schema are joined from `datasets`; operation and
-renderer versions are fixed by the tagged companion package. `render_seed` is
-retained because it is an item-authoring choice and affects deterministic
-wording.
-
-`tablesuite.load_task` accepts both the compact v1.3.0 rows and legacy v1.2.1
-nested rows. Users do not need to reconstruct internal plans themselves.
+The public rows keep only item-specific source references and execution
+policy. Dataset partition, deduplication cluster, OpenML identity, and schema
+are joined from `datasets`; executor and renderer versions are fixed by the
+matching `v2.0.0` package tag.
 
 ## Locally Generated Bundles
 

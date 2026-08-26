@@ -42,14 +42,15 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--dataset-card", type=Path, required=True)
     release.add_argument("--output", type=Path, required=True)
     release.add_argument("--seed", type=int, default=0)
-    release.add_argument("--cell-items-per-dataset", type=int, default=32)
-    release.add_argument("--cell-transfer-items-per-dataset", type=int, default=16)
+    release.add_argument("--grounding-items-per-dataset", type=int, default=30)
+    release.add_argument("--grounding-transfer-items-per-dataset", type=int, default=15)
     release.add_argument("--qa-items-per-dataset", type=int, default=12)
     release.add_argument("--qa-transfer-items-per-dataset", type=int, default=6)
-    release.add_argument("--min-cell-context-columns", type=int, default=4)
-    release.add_argument("--max-cell-context-columns", type=int, default=8)
+    release.add_argument("--min-grounding-context-columns", type=int, default=4)
+    release.add_argument("--max-grounding-context-columns", type=int, default=8)
     release.add_argument("--min-qa-context-columns", type=int, default=3)
     release.add_argument("--max-qa-context-columns", type=int, default=8)
+    release.add_argument("--grounding-row-size", type=int, action="append", default=[])
     release.add_argument("--qa-row-size", type=int, action="append", default=[])
     release.add_argument("--shard-size", type=int, default=50_000)
 
@@ -68,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--source", type=Path, required=True)
     generate.add_argument(
         "--name",
-        choices=["cell_grounding", "table_question_answering"],
+        choices=["table_grounding", "table_question_answering"],
         required=True,
     )
     generate.add_argument(
@@ -184,7 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument(
         "--name",
         choices=[
-            "cell_grounding",
+            "table_grounding",
             "table_question_answering",
         ],
         required=True,
@@ -323,6 +324,9 @@ def _run_task(args: argparse.Namespace) -> None:
 
 
 def _run_build_release(args: argparse.Namespace) -> None:
+    grounding_row_sizes = (
+        tuple(args.grounding_row_size) if args.grounding_row_size else (4, 8, 16)
+    )
     row_sizes = tuple(args.qa_row_size) if args.qa_row_size else (4, 8, 16)
     summary = build_huggingface_release(
         reference_root=args.reference,
@@ -331,14 +335,15 @@ def _run_build_release(args: argparse.Namespace) -> None:
         output_dir=args.output,
         config=TaskGenerationConfig(
             seed=args.seed,
-            cell_items_per_dataset=args.cell_items_per_dataset,
-            cell_transfer_items_per_dataset=args.cell_transfer_items_per_dataset,
+            grounding_items_per_dataset=args.grounding_items_per_dataset,
+            grounding_transfer_items_per_dataset=args.grounding_transfer_items_per_dataset,
             qa_items_per_dataset=args.qa_items_per_dataset,
             qa_transfer_items_per_dataset=args.qa_transfer_items_per_dataset,
-            min_cell_context_columns=args.min_cell_context_columns,
-            max_cell_context_columns=args.max_cell_context_columns,
+            min_grounding_context_columns=args.min_grounding_context_columns,
+            max_grounding_context_columns=args.max_grounding_context_columns,
             min_qa_context_columns=args.min_qa_context_columns,
             max_qa_context_columns=args.max_qa_context_columns,
+            grounding_row_sizes=grounding_row_sizes,
             qa_row_sizes=row_sizes,
             shard_size=args.shard_size,
         ),

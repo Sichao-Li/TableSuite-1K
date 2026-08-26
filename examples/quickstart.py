@@ -15,7 +15,7 @@ def main() -> None:
         "--name",
         default="table_question_answering",
         choices=[
-            "cell_grounding",
+            "table_grounding",
             "table_question_answering",
         ],
     )

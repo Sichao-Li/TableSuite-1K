@@ -13,10 +13,14 @@ from tablesuite.evaluation.contracts import (
 )
 from tablesuite.types import MaterializedTableSlice
 
-EXECUTOR_VERSION = "1.0"
+EXECUTOR_VERSION = "2.0"
 
 _ARGUMENT_SCHEMAS: dict[str, frozenset[str]] = {
     "cell_lookup": frozenset({"column"}),
+    "row_lookup": frozenset({"row_id"}),
+    "column_values": frozenset({"column"}),
+    "distinct_values": frozenset({"column"}),
+    "value_counts": frozenset({"column"}),
     "aggregate": frozenset({"column", "aggregation"}),
     "argmax_lookup": frozenset({"maximize_column", "return_column"}),
     "filtered_argmax_lookup": frozenset(
@@ -97,6 +101,52 @@ def execute_operation(
         return OperationResult(
             answer=answer,
             evidence=(_cell(plan, row_id, column),),
+            render_values={"column": column},
+        )
+
+    if name == "row_lookup":
+        row_id = arguments["row_id"]
+        _require_row(rows, row_id)
+        return OperationResult(
+            answer={
+                column: normalize_value(rows[row_id][column])
+                for column in table.source.columns
+            },
+            evidence=tuple(_cell(plan, row_id, column) for column in table.source.columns),
+            render_values={"row_id": row_id},
+        )
+
+    if name in {"column_values", "distinct_values", "value_counts"}:
+        column = arguments["column"]
+        _require_columns(table, column)
+        values = [normalize_value(row[column]) for row in table.rows]
+        evidence = tuple(
+            _cell(plan, row_id, column) for row_id in table.source.row_ids
+        )
+        if name == "column_values":
+            answer: Any = values
+        else:
+            keyed: dict[str, Any] = {}
+            ordered_keys: list[str] = []
+            counts: dict[str, int] = {}
+            for value in values:
+                key = stable_value_key(value)
+                if key not in keyed:
+                    keyed[key] = value
+                    ordered_keys.append(key)
+                    counts[key] = 0
+                counts[key] += 1
+            answer = (
+                [keyed[key] for key in ordered_keys]
+                if name == "distinct_values"
+                else [
+                    {"value": keyed[key], "count": counts[key]}
+                    for key in ordered_keys
+                ]
+            )
+        return OperationResult(
+            answer=answer,
+            evidence=evidence,
             render_values={"column": column},
         )
 
@@ -209,6 +259,24 @@ def validate_operation_spec(plan: EvaluationPlan) -> None:
         aggregation = plan.operation.arguments["aggregation"]
         if aggregation not in {"count", "sum", "mean", "min", "max"}:
             raise ValueError(f"unsupported aggregation: {aggregation}")
+    column_arguments = {
+        value
+        for key, value in plan.operation.arguments.items()
+        if key == "column" or key.endswith("_column")
+    }
+    if outside := column_arguments - set(plan.source.columns):
+        raise ValueError(
+            f"operation columns are outside the source slice: {sorted(outside)}"
+        )
+    row_arguments = {
+        value
+        for key, value in plan.operation.arguments.items()
+        if key == "row_id" or key.endswith("_row_id")
+    }
+    if outside := row_arguments - set(plan.source.row_ids):
+        raise ValueError(
+            f"operation rows are outside the source slice: {sorted(outside)}"
+        )
 
 
 def _aggregate(values: list[int | float], aggregation: str) -> int | float:
