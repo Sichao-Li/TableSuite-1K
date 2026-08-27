@@ -233,6 +233,27 @@ def test_table_grounding_operations_are_closed_world(
     )
 
 
+def test_row_lookup_prompt_excludes_synthetic_row_id(
+    benchmark_fixture: tuple[Path, Path],
+) -> None:
+    reference, source = benchmark_fixture
+    plan = _plan(
+        plan_id="grounding_row_contract",
+        task="grounding",
+        source=TableSlice("openml_1", ("0", "1"), ("Age", "Income")),
+        operation=OperationSpec("row_lookup", {"row_id": "1"}),
+        scoring=ScoringSpec("json"),
+    )
+    executor = PlanExecutor(
+        Benchmark.from_path(reference, source), PlanRegistry((plan,))
+    )
+
+    item = executor.materialize(plan)
+
+    assert "do not include the synthetic row_id field" in item.request.question
+    assert "row_id" in item.request.table_text
+
+
 def test_rendered_questions_quote_ambiguous_column_names() -> None:
     plan = _plan(
         plan_id="grounding_numeric_header",

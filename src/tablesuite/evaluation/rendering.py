@@ -192,6 +192,11 @@ def render_evaluation_request(
         for key, value in result.render_values.items()
     }
     question = templates[template_index].format(**values)
+    if plan.operation.name == "row_lookup":
+        question += (
+            " Return only the source feature columns; do not include the synthetic "
+            "row_id field."
+        )
     if plan.scoring.answer_type == "json":
         question += " Represent every displayed [missing] value as JSON null."
     table_text = render_table(
