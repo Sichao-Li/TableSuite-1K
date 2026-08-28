@@ -2,47 +2,41 @@
 
 ## Prediction
 
-Every prediction example consists of an input-only request and separate
-`PredictionGold`. Evaluation targets cannot be rendered because they are
-absent from the request object; only explicitly selected support labels may be
-visible. All official prediction protocols are inference-only: no fine-tuning,
-fitting, or per-dataset parameter updates are permitted.
-
-### Protocol Matrix
+Every prediction example contains an input-only request and separate
+`PredictionGold`. Query targets cannot be rendered because they are absent from
+the request object. Prediction is inference-only: no fitting, fine-tuning, or
+per-dataset parameter update is part of the protocol.
 
 | Protocol | Interface | Visible labels | Query scope |
 | --- | --- | --- | --- |
-| `zero_shot_icl` | row-query format | none | frozen episode query rows |
-| `few_shot_icl` | row examples | 4/16/32 demonstrations | frozen episode query rows |
-| `zero_label_serialized_table` | serialized table | none | every eligible row, or matched frozen episode queries |
-| `partially_labeled_serialized_table` | serialized table | 4/16/32 support rows | all remaining rows by default |
+| `icl` | row demonstrations | selected support fraction | frozen episode queries |
+| `serialized_table` | one serialized table | selected support fraction | the same frozen queries |
 
-`SerializedTablePredictionRequest` always stores a feature-only table. For the
-partially labelled protocol, visible support targets live in a separate
-`visible_labels` slice and are merged into the rendered table. Query targets
-remain only in `PredictionGold`. Zero-label requests cover all eligible source
-rows by default; deterministic source-order chunks are allowed for bounded
-consumers and may not sample or drop rows. Its optional episode scope reuses
-the frozen zero-shot query rows for a matched interface comparison. Partially
-labelled requests retain a
-frozen episode's support rows and predict every other eligible row by default.
-The optional episode scope retains only that episode's frozen queries, enabling
-a controlled comparison against few-shot ICL with identical source rows.
+The public `support` argument accepts one fraction or an ordered sequence. The
+official schedule is `0/10/30/50/70/90/100%`. Each prediction plan has one
+deterministic support ordering; every level is a prefix of that ordering. The
+sets are therefore nested, and both interfaces receive the same labelled
+source rows.
 
-`ICLPredictionRequest` is deliberately rendered as row examples followed by
-target-hidden queries, never as a Markdown/JSON table. Zero-shot requests omit
-demonstrations. Few-shot requests expose exactly 4, 16, or 32 frozen support
-rows.
+For `N` eligible non-query rows, zero maps to zero support rows. Every positive
+fraction maps to:
 
-The zero-label serialized protocol still asks for the registered OpenML target
-for each row and scores against separate evaluation targets. It is label-free
-inference, not a clustering task; arbitrary cluster identifiers require a
-separate permutation-invariant evaluation contract.
+```text
+min(N, max(1, ceil(fraction * N)))
+```
 
-Few-shot classification episodes are executable only when every query class
-occurs in the visible support labels; regression episodes require finite
-support and query targets. Every protocol is inference-only. OpenML targets
-provide local evaluation targets, not permission to update model parameters.
+Classification support ordering is label-stratified. Regression ordering is
+quantile-stratified. Query rows are always excluded from support.
+
+`ICLPredictionRequest` renders selected rows as labelled demonstrations,
+followed by target-hidden queries. `SerializedTablePredictionRequest` stores a
+feature-only table containing the same support and query rows; visible support
+targets live in a separate `visible_labels` slice and are merged only while
+rendering. At 100%, the serialized request contains every eligible row for that
+query plan. Query targets remain only in `PredictionGold`.
+
+The frozen v2.0 4/16/32-shot protocols remain available through
+`TableSuite.fixed_prediction()` solely for exact backward reproduction.
 
 ## Provided-Table Grounding
 
@@ -61,36 +55,36 @@ and is not claimed by this release.
 `TableSlice` provides uniform access to a source row or subtable. It is a data
 primitive, not an additional scored task. Serialized prediction uses a
 multi-row feature slice; ICL uses demonstration and query slices; table
-grounding uses one- or multi-row source slices. Task constructors control target
-visibility so evaluation targets cannot enter model inputs.
+grounding uses one- or multi-row source slices. Task constructors control
+target visibility so evaluation targets cannot enter model inputs.
 
 ## Partitions
 
 `dataset_split` is the duplicate-aware train/validation/test partition for
-cross-dataset studies. ICL episodes retain their fixed demonstration/query row
-identities. Serialized-table chunking is an input-capacity choice, not a train
-fold. Dataset transfer, shot count, and chunk size must be reported separately.
+cross-dataset studies. Prediction episodes retain fixed query identities.
+Dataset transfer, requested and realized support, table size, and context
+coverage must be reported separately.
 
 ## Metrics
 
 Classification reports accuracy, balanced accuracy, and macro-F1 per dataset,
 then macro-averages across datasets. Regression reports per-dataset MAE, RMSE,
-R-squared, and scale-normalized errors before dataset-macro aggregation. ICL
-results are reported separately by shot count.
+R-squared, and scale-normalized errors before dataset-macro aggregation.
+Prediction results are reported separately at every support fraction.
 
 Grounding reports exact typed-answer accuracy, parse-failure rate,
 dataset-macro accuracy, cluster-macro accuracy, and accuracy by operation.
 
-Every published result must include its saved `SelectionManifest`, reference
-revision, serialization version, shot count or table scope, and metric
-aggregation version.
+Every published result must include its manifest, reference revision,
+serialization version, requested and realized support, prompt tokens, model
+context limit, context coverage, and metric aggregation version.
 
 ## Official Hugging Face Tasks
 
 TableSuite-1K publishes independently loadable table-grounding and table-QA
-configurations. Each item freezes its semantic operation
-and source references while the package renders wording and computes gold only
-when accessed. Task specifications remain value-free and are audited for
-deduplication-cluster partitioning and exact source-cell overlap. See
+configurations. Each item freezes its semantic operation and source references
+while the package renders wording and computes gold only when accessed. Task
+specifications remain value-free and are audited for deduplication-cluster
+partitioning and exact source-cell overlap. See
 [TASK_EVALUATION.md](TASK_EVALUATION.md) for loading, scoring, and transfer
 contracts.

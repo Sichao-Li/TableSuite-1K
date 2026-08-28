@@ -26,6 +26,29 @@ SerializedTableScope = Literal["full_table", "episode"]
 
 
 @dataclass(frozen=True)
+class SupportLevel:
+    """Resolved labelled support for one inference-only prediction request."""
+
+    requested_fraction: float
+    pool_size: int
+    count: int
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.requested_fraction <= 1.0:
+            raise ValueError("requested support fraction must be between 0 and 1")
+        if self.pool_size < 0:
+            raise ValueError("support pool size cannot be negative")
+        if not 0 <= self.count <= self.pool_size:
+            raise ValueError("resolved support count is outside the support pool")
+
+    @property
+    def realized_fraction(self) -> float:
+        """Return the fraction of eligible support rows actually exposed."""
+
+        return self.count / self.pool_size if self.pool_size else 0.0
+
+
+@dataclass(frozen=True)
 class DatasetSpec:
     """One OpenML-referenced dataset and its prediction contract."""
 
@@ -297,8 +320,8 @@ class ICLPredictionRequest:
     def __post_init__(self) -> None:
         if self.protocol not in {"zero_shot_icl", "few_shot_icl"}:
             raise ValueError(f"unknown ICL protocol: {self.protocol}")
-        if self.shots not in {0, 4, 16, 32}:
-            raise ValueError(f"unsupported shot count: {self.shots}")
+        if self.shots < 0:
+            raise ValueError("shot count cannot be negative")
         if self.target_column in self.query.source.columns:
             raise ValueError("target column leaked into in-context query")
         if self.protocol == "zero_shot_icl":
@@ -348,6 +371,7 @@ class SerializedTablePredictionExample:
 
     request: SerializedTablePredictionRequest
     gold: PredictionGold
+    support: SupportLevel | None = None
 
     def __post_init__(self) -> None:
         if self.gold.request_id != self.request.request_id:
@@ -364,6 +388,7 @@ class ICLPredictionExample:
     gold: PredictionGold
     episode_id: str
     shots: int
+    support: SupportLevel | None = None
 
     def __post_init__(self) -> None:
         if self.shots != self.request.shots:

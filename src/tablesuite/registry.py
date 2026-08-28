@@ -5,12 +5,15 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from tablesuite.prediction import PredictionInterface
+
 PublicTaskName = Literal[
     "table_prediction",
     "table_grounding",
     "table_question_answering",
 ]
-PredictionProtocol = Literal[
+PredictionProtocol = PredictionInterface
+FixedPredictionProtocol = Literal[
     "zero_shot_icl",
     "few_shot_icl",
     "zero_label_serialized_table",
@@ -47,10 +50,8 @@ _TASKS = (
         official=True,
         generatable=False,
         protocols=(
-            "zero_shot_icl",
-            "few_shot_icl",
-            "zero_label_serialized_table",
-            "partially_labeled_serialized_table",
+            "icl",
+            "serialized_table",
         ),
     ),
     TaskDescriptor(

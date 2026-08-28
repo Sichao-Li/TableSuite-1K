@@ -21,7 +21,7 @@ benchmark gold is never authored by an LLM.
 
 ```bash
 pip install \
-  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.0.0'
+  'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.1.0'
 ```
 
 ## Quickstart
@@ -71,18 +71,26 @@ print(report.to_dict())
 Missing predictions fail official evaluation. `allow_partial=True` is
 available only for diagnostic runs.
 
-Prediction uses the same entry point while making the inference protocol
-explicit:
+Prediction uses one deterministic support pool per frozen query episode. A
+single fraction runs one condition; a tuple runs a nested support curve:
 
 ```python
+from tablesuite import render_icl_prediction
+
 prediction = suite.prediction(
-    "few_shot_icl",
+    "icl",
+    support=(0.1, 0.3),
     dataset_ids=("openml_45069",),
-    shots=(16,),
-    max_episodes_per_dataset_per_shot=1,
+    max_episodes_per_dataset=1,
 )
-case = next(prediction.few_shot_icl())
+for case in prediction:
+    print(case.support)
+    print(render_icl_prediction(case.request).input_text)
 ```
+
+`support=0.1` runs only 10%. Python's `(0.1)` is also a scalar; `(0.1,)`
+is the equivalent one-element tuple. The official curve is exported as
+`OFFICIAL_SUPPORT_LEVELS`.
 
 ## Public Configurations
 
@@ -90,7 +98,7 @@ case = next(prediction.few_shot_icl())
 | --- | --- |
 | `datasets` | OpenML source, schema, target, split, and license metadata |
 | `table_prediction_tasks` | prediction-eligible datasets and metrics |
-| `prediction_episodes` | frozen 4/16/32-shot support/query references |
+| `prediction_episodes` | frozen query anchors and fixed-4/16/32 compatibility records |
 | `grounding_tasks` | eligible non-target columns and sampling policy |
 | `table_grounding` | official provided-table lookup/comprehension plans |
 | `table_question_answering` | official programmatic QA plans |
@@ -107,13 +115,16 @@ parameter updates are part of an official run.
 
 | Protocol | Input | Visible labels |
 | --- | --- | --- |
-| `zero_shot_icl` | target-hidden row queries | none |
-| `few_shot_icl` | demonstrations plus queries | 4/16/32 |
-| `zero_label_serialized_table` | feature-only serialized table | none |
-| `partially_labeled_serialized_table` | one table with labelled support and masked queries | 4/16/32 |
+| `icl` | labelled row demonstrations plus fixed queries | selected support fraction |
+| `serialized_table` | one table with labelled support and fixed masked queries | selected support fraction |
 
-Serialized-table requests support full-table scope and a bounded episode scope
-that reuses the frozen ICL query rows for matched interface comparisons.
+For a support pool of size `N`, fraction zero exposes no labels and every
+positive fraction exposes `min(N, max(1, ceil(fraction * N)))` labels. The same
+nested source rows are used by both interfaces. Query labels always remain
+private. At 100%, every eligible non-query row is visible as support.
+
+The fixed v2.0 4/16/32-shot records remain reproducible through
+`suite.fixed_prediction(...)` and the lower-level `Benchmark.select(...)` API.
 
 ### Table Grounding
 

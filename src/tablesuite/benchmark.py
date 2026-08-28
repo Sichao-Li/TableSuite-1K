@@ -17,6 +17,7 @@ from tablesuite._util import (
     valid_target,
 )
 from tablesuite.catalog import Catalog, CatalogSelection
+from tablesuite.prediction import PredictionDataset, PredictionInterface
 from tablesuite.rendering import render_cell_fact_views
 from tablesuite.source import ParquetSource
 from tablesuite.types import (
@@ -170,6 +171,26 @@ class BenchmarkSubset:
         """Resolve an ordered collection of slices from one or more datasets."""
 
         return tuple(self.materialize(source_slice) for source_slice in source_slices)
+
+    def prediction(
+        self,
+        protocol: PredictionInterface,
+        *,
+        support: float | Iterable[float],
+        max_episodes_per_dataset: int | None = None,
+        seed: int | None = None,
+    ) -> PredictionDataset:
+        """Build nested percentage-controlled requests from frozen query rows."""
+
+        return PredictionDataset(
+            source=self.source,
+            datasets=self.datasets,
+            episodes=self._episodes,
+            protocol=protocol,
+            support=support,
+            max_episodes_per_dataset=max_episodes_per_dataset,
+            seed=self.manifest.selection.seed if seed is None else seed,
+        )
 
     def zero_label_serialized_table(
         self,
