@@ -11,7 +11,9 @@ from tablesuite.benchmark import Benchmark, BenchmarkSubset
 from tablesuite.catalog import Catalog
 from tablesuite.evaluation.contracts import EvaluationSplit
 from tablesuite.generation import GeneratedTaskDataset, generate_task
+from tablesuite.prediction import PredictionDataset
 from tablesuite.registry import (
+    FixedPredictionProtocol,
     PredictionProtocol,
     PublicTaskName,
     TaskDescriptor,
@@ -121,15 +123,15 @@ class TableSuite:
         self,
         protocol: PredictionProtocol | str,
         *,
+        support: float | Iterable[float],
         dataset_ids: Iterable[str] = (),
         dataset_splits: Iterable[str] = (),
         task_families: Iterable[TaskFamily] = (),
-        shots: Iterable[int] = (),
         max_datasets: int | None = None,
-        max_episodes_per_dataset_per_shot: int | None = None,
+        max_episodes_per_dataset: int | None = None,
         seed: int = 0,
-    ) -> BenchmarkSubset:
-        """Select one frozen inference-only table-prediction protocol."""
+    ) -> PredictionDataset:
+        """Build ICL or serialized-table requests at chosen support fractions."""
 
         descriptor = describe_task("table_prediction")
         if protocol not in descriptor.protocols:
@@ -138,7 +140,48 @@ class TableSuite:
                 f"unknown prediction protocol {protocol!r}; choose one of: {choices}"
             )
         selection = Selection(
-            tasks=(cast(PredictionProtocol, protocol),),
+            tasks=("few_shot_icl",),
+            dataset_ids=tuple(str(value) for value in dataset_ids),
+            dataset_splits=tuple(str(value) for value in dataset_splits),
+            task_families=tuple(task_families),
+            max_datasets=max_datasets,
+            seed=seed,
+        )
+        subset = Benchmark(self._catalog(), ParquetSource(self.source)).select(selection)
+        return subset.prediction(
+            cast(PredictionProtocol, protocol),
+            support=support,
+            max_episodes_per_dataset=max_episodes_per_dataset,
+            seed=seed,
+        )
+
+    def fixed_prediction(
+        self,
+        protocol: FixedPredictionProtocol | str,
+        *,
+        dataset_ids: Iterable[str] = (),
+        dataset_splits: Iterable[str] = (),
+        task_families: Iterable[TaskFamily] = (),
+        shots: Iterable[int] = (),
+        max_datasets: int | None = None,
+        max_episodes_per_dataset_per_shot: int | None = None,
+        seed: int = 0,
+    ) -> BenchmarkSubset:
+        """Load the frozen v2.0 fixed-4/16/32-shot prediction protocols."""
+
+        choices = {
+            "zero_shot_icl",
+            "few_shot_icl",
+            "zero_label_serialized_table",
+            "partially_labeled_serialized_table",
+        }
+        if protocol not in choices:
+            raise ValueError(
+                f"unknown fixed prediction protocol {protocol!r}; "
+                f"choose one of: {', '.join(sorted(choices))}"
+            )
+        selection = Selection(
+            tasks=(cast(FixedPredictionProtocol, protocol),),
             dataset_ids=tuple(str(value) for value in dataset_ids),
             dataset_splits=tuple(str(value) for value in dataset_splits),
             task_families=tuple(task_families),

@@ -17,10 +17,8 @@ def test_task_registry_exposes_three_public_families() -> None:
     )
     prediction, grounding, qa = tasks
     assert prediction.protocols == (
-        "zero_shot_icl",
-        "few_shot_icl",
-        "zero_label_serialized_table",
-        "partially_labeled_serialized_table",
+        "icl",
+        "serialized_table",
     )
     assert prediction.generatable is False
     assert grounding.generatable is True
@@ -42,14 +40,26 @@ def test_tablesuite_facade_routes_catalog_and_prediction_selection(
     assert suite.catalog_summary()["datasets"] == 2
 
     selected = suite.prediction(
+        "icl",
+        support=0.25,
+        dataset_ids=("openml_1",),
+        max_episodes_per_dataset=1,
+    )
+    example = next(iter(selected))
+    assert selected.manifest.protocol == "icl"
+    assert selected.manifest.dataset_ids == ("openml_1",)
+    assert example.support is not None
+    assert example.support.requested_fraction == 0.25
+    assert example.support.pool_size == 6
+    assert example.support.count == 2
+
+    fixed = suite.fixed_prediction(
         "few_shot_icl",
         dataset_ids=("openml_1",),
         shots=(4,),
         max_episodes_per_dataset_per_shot=1,
     )
-    assert selected.manifest.selection.tasks == ("few_shot_icl",)
-    assert selected.manifest.dataset_ids == ("openml_1",)
-    assert selected.manifest.episode_ids == ("eligible_k4",)
+    assert fixed.manifest.episode_ids == ("eligible_k4",)
 
 
 def test_tablesuite_facade_rejects_wrong_mode_early(
@@ -63,4 +73,4 @@ def test_tablesuite_facade_rejects_wrong_mode_early(
     with pytest.raises(ValueError, match="cannot be generated"):
         suite.generate("table_prediction")
     with pytest.raises(ValueError, match="unknown prediction protocol"):
-        suite.prediction("not_a_protocol")
+        suite.prediction("not_a_protocol", support=0.1)
