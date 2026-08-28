@@ -191,9 +191,7 @@ class PredictionDataset:
             else "zero_label_serialized_table"
         )
         request_id = _request_id(plan.plan_id, self.protocol, level.requested_fraction)
-        table_row_ids = tuple(
-            sorted({*support_row_ids, *plan.query_row_ids}, key=int)
-        )
+        table_row_ids = (*support_row_ids, *plan.query_row_ids)
         table = self.source.materialize(
             dataset,
             TableSlice(dataset.dataset_id, table_row_ids, dataset.feature_columns),
