@@ -90,6 +90,14 @@ class PredictionDataset:
     def __len__(self) -> int:
         return len(self._plans) * len(self.support_fractions)
 
+    @property
+    def datasets(self) -> tuple[DatasetSpec, ...]:
+        """Return dataset specifications in manifest order."""
+
+        return tuple(
+            self._datasets[dataset_id] for dataset_id in self.manifest.dataset_ids
+        )
+
     def __iter__(
         self,
     ) -> Iterator[ICLPredictionExample | SerializedTablePredictionExample]:
