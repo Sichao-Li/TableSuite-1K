@@ -1,97 +1,116 @@
 # Benchmark Protocols
 
-## Prediction
+TableSuite-1K separates three capabilities and evaluates each against an
+explicit source-grounded contract. Model training, prompting, and decoding are
+left to the submitter unless a protocol states otherwise.
 
-Every prediction example consists of an input-only request and separate
-`PredictionGold`. Evaluation targets cannot be rendered because they are
-absent from the request object; only explicitly selected support labels may be
-visible. All official prediction protocols are inference-only: no fine-tuning,
-fitting, or per-dataset parameter updates are permitted.
+## Table Prediction
 
-The task family and complete classification output vocabulary are target-schema
-metadata and are shown in every request. They reveal no row-to-label assignment;
-"visible labels" below refers only to assignments attached to source rows.
+Prediction is inference-only: an official request permits no fitting,
+fine-tuning, or per-dataset parameter update. Evaluation targets live in
+`PredictionGold` and cannot be rendered from the request object.
 
-### Protocol Matrix
-
-| Protocol | Interface | Visible labels | Query scope |
+| Interface | Input | Visible row labels | Query rows |
 | --- | --- | --- | --- |
-| `icl` | row demonstrations | selected support fraction | frozen episode queries |
-| `serialized_table` | one serialized table | selected support fraction | the same frozen queries |
+| `icl` | labelled row demonstrations | selected support prefix | frozen |
+| `serialized_table` | one table with labelled support and masked queries | selected support prefix | frozen |
 
-The public `support` argument accepts one fraction or an ordered sequence. The
-official schedule is `0/10/30/50/70/90/100%`. Each prediction plan has one
-deterministic support ordering; every level is a prefix of that ordering. The
-sets are therefore nested, and both interfaces receive the same labelled
-source rows.
+Every request states the task family. Classification requests also state the
+complete output vocabulary; this is target-schema metadata, not a row-level
+label assignment.
 
-For `N` eligible non-query rows, zero maps to zero support rows. Every positive
-fraction maps to:
+### Percentage Support
+
+The official capacity schedule is `0/10/30/50/70/90/100%`. For `N` eligible
+non-query rows, zero exposes no labels and positive fraction `p` exposes:
 
 ```text
-min(N, max(1, ceil(fraction * N)))
+min(N, max(1, ceil(p * N)))
 ```
 
-Classification support ordering is label-stratified. Regression ordering is
-quantile-stratified. Query rows are always excluded from support.
+Each query has one deterministic support ordering. Levels are nested prefixes,
+and both interfaces use the same rows. Classification ordering is
+label-stratified; regression ordering is quantile-stratified. Query rows are
+never support rows.
 
-`ICLPredictionRequest` renders selected rows as labelled demonstrations,
-followed by target-hidden queries. `SerializedTablePredictionRequest` stores a
-feature-only table containing the same support and query rows; visible support
-targets live in a separate `visible_labels` slice and are merged only while
-rendering. At 100%, the serialized request contains every eligible row for that
-query plan. Query targets remain only in `PredictionGold`.
+The legacy v2.0 fixed-4/16/32-shot protocols remain available only through
+`TableSuite.fixed_prediction()` for exact reproduction.
 
-The frozen v2.0 4/16/32-shot protocols remain available through
-`TableSuite.fixed_prediction()` solely for exact backward reproduction.
+### Context-Budgeted Evaluation
+
+Percentage support measures a model's use of available supervision. Context
+limits are a separate systems constraint. To evaluate a model fairly:
+
+1. create a prediction dataset with one maximum support fraction;
+2. call `fit_context` with the model's actual prompt token counter;
+3. include system text and chat-template tokens in that counter;
+4. report the resulting `ContextBudgetReport` with task metrics.
+
+The fitter finds the largest nested support prefix under the budget. It records
+requested/realized support, row count, prompt tokens, and exclusions. It never
+silently truncates. A request whose zero-support prompt is too long is excluded
+with reason `zero_support_exceeds_prompt_budget`.
+
+### Prediction Metrics
+
+Structured predictions are keyed by request ID and follow query-row order (or
+are mappings keyed by query row ID). The dependency-free evaluator reports:
+
+- classification: dataset-macro accuracy, balanced accuracy, macro-F1, and
+  dedup-cluster-macro balanced accuracy;
+- regression: dataset-macro MAE, RMSE, normalized MAE/RMSE, R-squared, and
+  dedup-cluster-macro normalized MAE;
+- both: requested/scored records, datasets, and response coverage.
+
+Results are reported separately for every support level and interface.
 
 ## Provided-Table Grounding
 
-Table grounding samples non-target, non-identifier feature slices with a
-deterministic operation-balanced policy. Cell lookup, row lookup, ordered
-column extraction, distinct-value extraction, and value counting are executed
-only over the table shown in the request. Static and runtime audits reject any
-operation or evidence reference outside that slice.
+Grounding asks for facts or simple comprehension over only the displayed table.
+The official operations are:
 
-V2 uses literal source headers and records `schema_language="literal"`.
-Paraphrased or mapped schema language requires a separately curated mapping
-and is not claimed by this release.
+```text
+cell_lookup
+row_lookup
+column_values
+distinct_values
+value_counts
+```
 
-## Source Slices
+Static and runtime audits reject operations or evidence outside the displayed
+slice. Literal source headers are used in v2.1. Paraphrased or mapped schema
+language requires a curated mapping and is not claimed by this release.
 
-`TableSlice` provides uniform access to a source row or subtable. It is a data
-primitive, not an additional scored task. Serialized prediction uses a
-multi-row feature slice; ICL uses demonstration and query slices; table
-grounding uses one- or multi-row source slices. Task constructors control
-target visibility so evaluation targets cannot enter model inputs.
+## Table Question Answering
 
-## Partitions
+QA applies typed operations to controlled 4/8/16-row subtables:
 
-`dataset_split` is the duplicate-aware train/validation/test partition for
-cross-dataset studies. Prediction episodes retain fixed query identities.
-Dataset transfer, requested and realized support, table size, and context
-coverage must be reported separately.
+```text
+count, sum, mean, min, max
+argmax lookup
+filter then argmax lookup
+```
 
-## Metrics
+The operation plan and source references are frozen. Wording and gold are
+materialized deterministically at access time. Gold is never LLM-authored.
 
-Classification reports accuracy, balanced accuracy, and macro-F1 per dataset,
-then macro-averages across datasets. Regression reports per-dataset MAE, RMSE,
-R-squared, and scale-normalized errors before dataset-macro aggregation.
-Prediction results are reported separately at every support fraction.
+## Transfer Splits
 
-Grounding reports exact typed-answer accuracy, parse-failure rate,
-dataset-macro accuracy, cluster-macro accuracy, and accuracy by operation.
+`dataset_split` is assigned by `dedup_cluster_id` to prevent duplicate-related
+tables from crossing dataset partitions. Official semantic splits additionally
+separate source rows, templates, and operation composition:
 
-Every published result must include its manifest, reference revision,
-serialization version, requested and realized support, prompt tokens, model
-context limit, context coverage, and metric aggregation version.
+| Split | Held-out factor |
+| --- | --- |
+| `validation` | validation clusters |
+| `episode_test` | rows within training clusters |
+| `dataset_test` | dataset clusters |
+| `template_test` | rows and wording |
+| `composition_test` | composed QA operation |
 
-## Official Hugging Face Tasks
+## Required Result Metadata
 
-TableSuite-1K publishes independently loadable table-grounding and table-QA
-configurations. Each item freezes its semantic operation and source references
-while the package renders wording and computes gold only when accessed. Task
-specifications remain value-free and are audited for deduplication-cluster
-partitioning and exact source-cell overlap. See
-[TASK_EVALUATION.md](TASK_EVALUATION.md) for loading, scoring, and transfer
-contracts.
+Published results should include the package and dataset revisions, model and
+tokenizer revisions, task/interface, split, seed, serialization, requested and
+realized support, prompt-token budget, context coverage, response coverage,
+metric aggregation, and failure counts. Scores without coverage are incomplete.

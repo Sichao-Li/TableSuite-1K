@@ -4,24 +4,28 @@ from pathlib import Path
 
 import pytest
 
-from tablesuite import (
-    Benchmark,
-    Catalog,
-    Selection,
-    SelectionManifest,
-    TableSlice,
-    __version__,
-)
-from tablesuite.benchmark import _derive_zero_shot_episodes
+import tablesuite
+from tablesuite import TableSlice, __version__
+from tablesuite.benchmark import Benchmark, _derive_zero_shot_episodes
+from tablesuite.catalog import Catalog
 from tablesuite.rendering import (
     render_icl_prediction,
     render_serialized_table_prediction,
     render_table,
 )
+from tablesuite.types import Selection, SelectionManifest
 
 
 def test_package_version_is_available() -> None:
     assert __version__ == "2.1.0"
+
+
+def test_root_namespace_exposes_only_stable_user_interfaces() -> None:
+    assert "TableSuite" in tablesuite.__all__
+    assert "PredictionReport" in tablesuite.__all__
+    assert "Benchmark" not in tablesuite.__all__
+    assert "Catalog" not in tablesuite.__all__
+    assert "Selection" not in tablesuite.__all__
 
 
 def test_catalog_selection_and_manifest(
@@ -344,26 +348,6 @@ def test_partially_labeled_full_table_can_chunk_hidden_rows(
         ("6", "7"),
     ]
     assert all(len(example.request.visible_labels.rows) == 4 for example in examples)
-
-
-def test_grounding_is_source_bound_and_excludes_target(
-    benchmark_fixture: tuple[Path, Path]
-) -> None:
-    reference, source = benchmark_fixture
-    subset = Benchmark.from_path(reference, source).select(
-        Selection(
-            tasks=("grounding",),
-            dataset_ids=("openml_1",),
-            max_grounding_facts_per_dataset=100,
-        )
-    )
-
-    facts = list(subset.grounding())
-    assert len(facts) == 4
-    assert {fact.column_name for fact in facts} <= {"Age", "Income"}
-    assert all(fact.column_name != "Default" for fact in facts)
-    expected_views = {"key_value", "json", "markdown", "natural_language"}
-    assert all(set(fact.text_views) == expected_views for fact in facts)
 
 
 def test_selection_is_deterministic(benchmark_fixture: tuple[Path, Path]) -> None:

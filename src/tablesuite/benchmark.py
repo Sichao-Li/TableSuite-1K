@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -10,19 +9,13 @@ from typing import Any
 
 from tablesuite._util import (
     canonical_json,
-    normalize_identifier,
     normalize_value,
-    stable_id,
-    stable_order,
-    stable_value_key,
     valid_target,
 )
 from tablesuite.catalog import Catalog, CatalogSelection
 from tablesuite.prediction import PredictionDataset, PredictionInterface
-from tablesuite.rendering import render_cell_fact_views
 from tablesuite.source import ParquetSource
 from tablesuite.types import (
-    CellFact,
     DatasetSpec,
     ICLPredictionExample,
     ICLPredictionRequest,
@@ -450,47 +443,6 @@ class BenchmarkSubset:
         self._class_labels[dataset.dataset_id] = ordered
         return ordered
 
-    def grounding(self) -> Iterator[CellFact]:
-        """Yield deterministic, column-balanced non-target cell facts."""
-
-        self._require_task("grounding")
-        task_by_dataset = {
-            str(task["dataset_id"]): task for task in self._selection.grounding_tasks
-        }
-        selected_limit = self.manifest.selection.max_grounding_facts_per_dataset
-        for dataset in self._selection.datasets:
-            task = task_by_dataset.get(dataset.dataset_id)
-            if task is None:
-                continue
-            rows = self.source.rows(dataset)
-            columns = tuple(str(value) for value in task["eligible_columns"])
-            task_limit = int(task["max_cells"])
-            limit = task_limit if selected_limit is None else min(selected_limit, task_limit)
-            for column, row_id in _balanced_coordinates(
-                dataset.dataset_id, columns, len(rows), limit
-            ):
-                value = rows[row_id][column]
-                value_key = stable_value_key(value)
-                if value_key == "<missing>":
-                    continue
-                fact_key = canonical_json([dataset.dataset_id, str(row_id), column])
-                equivalence_key = canonical_json(
-                    [dataset.dataset_id, normalize_identifier(column), value_key]
-                )
-                yield CellFact(
-                    fact_id=stable_id("cell", fact_key),
-                    equivalence_id=stable_id("fact", equivalence_key),
-                    source=TableSlice(
-                        dataset_id=dataset.dataset_id,
-                        row_ids=(str(row_id),),
-                        columns=(column,),
-                    ),
-                    dataset_split=dataset.dataset_split,
-                    value=value,
-                    stable_value_key=value_key,
-                    text_views=render_cell_fact_views(column, value),
-                )
-
     def _require_task(self, task: str) -> None:
         if task not in self.manifest.selection.tasks:
             raise ValueError(f"task {task!r} was not selected")
@@ -546,25 +498,3 @@ def _derive_zero_shot_episodes(
         record["support_row_ids"] = []
         output.append(record)
     return output
-
-
-def _balanced_coordinates(
-    dataset_id: str,
-    columns: tuple[str, ...],
-    n_rows: int,
-    limit: int,
-) -> Iterator[tuple[str, int]]:
-    if not columns or n_rows <= 0:
-        return
-    ranked = sorted(columns, key=lambda column: stable_order(f"{dataset_id}:{column}:quota"))
-    base, remainder = divmod(limit, len(ranked))
-    for rank, column in enumerate(ranked):
-        quota = min(n_rows, base + int(rank < remainder))
-        if quota <= 0:
-            continue
-        start = int(stable_order(f"{dataset_id}:{column}:start"), 16) % n_rows
-        step = int(stable_order(f"{dataset_id}:{column}:step"), 16) % max(n_rows - 1, 1) + 1
-        while math.gcd(step, n_rows) != 1:
-            step = step % n_rows + 1
-        for offset in range(quota):
-            yield column, (start + offset * step) % n_rows

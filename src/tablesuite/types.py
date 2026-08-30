@@ -14,7 +14,6 @@ TaskName = Literal[
     "few_shot_icl",
     "zero_label_serialized_table",
     "partially_labeled_serialized_table",
-    "grounding",
 ]
 TaskFamily = Literal["classification", "regression"]
 TextView = Literal["json", "key_value", "markdown"]
@@ -52,7 +51,7 @@ class SupportLevel:
 
 @dataclass(frozen=True)
 class DatasetSpec:
-    """One OpenML-referenced dataset and its prediction contract."""
+    """One OpenML-referenced dataset and its benchmark contract."""
 
     dataset_id: str
     dataset_split: str
@@ -65,6 +64,7 @@ class DatasetSpec:
     dedup_cluster_id: str = ""
     target_transform: str = "none"
     excluded_feature_columns: tuple[str, ...] = ()
+    semantic_columns: tuple[str, ...] = ()
     dataset_name: str = ""
     license_claim: str = ""
     source_license_url: str = ""
@@ -82,20 +82,34 @@ class DatasetSpec:
         source_id = record.get("openml_data_id", record.get("source_id"))
         if source_id is None:
             raise KeyError("dataset record has no OpenML data ID")
+        feature_columns = tuple(str(value) for value in record["feature_columns"])
+        target_column = str(record["target_column"])
+        excluded = tuple(
+            str(value) for value in record.get("excluded_feature_columns", [])
+        )
+        declared_semantic = record.get("semantic_columns")
+        semantic_columns = (
+            tuple(str(value) for value in declared_semantic)
+            if declared_semantic is not None
+            else tuple(
+                column
+                for column in feature_columns
+                if column != target_column and column not in set(excluded)
+            )
+        )
         return cls(
             dataset_id=str(record["dataset_id"]),
             dataset_split=str(record["dataset_split"]),
             source_id=str(source_id),
             source_url=str(record.get("openml_url", record.get("source_url", ""))),
             task_type=str(record["task_type"]),
-            target_column=str(record["target_column"]),
-            feature_columns=tuple(str(value) for value in record["feature_columns"]),
+            target_column=target_column,
+            feature_columns=feature_columns,
             n_rows=int(record["n_rows"]),
             dedup_cluster_id=str(record.get("dedup_cluster_id") or record["dataset_id"]),
             target_transform=str(record.get("target_transform") or "none"),
-            excluded_feature_columns=tuple(
-                str(value) for value in record.get("excluded_feature_columns", [])
-            ),
+            excluded_feature_columns=excluded,
+            semantic_columns=semantic_columns,
             dataset_name=str(record.get("dataset_name") or ""),
             license_claim=str(
                 record.get("openml_license_claim", record.get("license_claim")) or ""
@@ -118,7 +132,6 @@ class Selection:
     shots: tuple[int, ...] = ()
     max_datasets: int | None = None
     max_episodes_per_dataset_per_shot: int | None = None
-    max_grounding_facts_per_dataset: int | None = None
     seed: int = 0
 
     @classmethod
@@ -141,7 +154,6 @@ class Selection:
             "few_shot_icl",
             "zero_label_serialized_table",
             "partially_labeled_serialized_table",
-            "grounding",
         }:
             raise ValueError(f"unknown tasks: {sorted(unknown)}")
         if len(self.dataset_ids) != len(set(self.dataset_ids)):
@@ -158,7 +170,6 @@ class Selection:
         for name in (
             "max_datasets",
             "max_episodes_per_dataset_per_shot",
-            "max_grounding_facts_per_dataset",
         ):
             value = getattr(self, name)
             if value is not None and value <= 0:
@@ -441,38 +452,3 @@ def _validate_prediction_label_space(
         raise ValueError("classification labels cannot contain missing values")
     if len(keys) != len(set(keys)):
         raise ValueError("classification labels must be unique")
-
-
-@dataclass(frozen=True)
-class CellFact:
-    """One source-grounded feature-cell fact and its equivalent text views."""
-
-    fact_id: str
-    equivalence_id: str
-    source: TableSlice
-    dataset_split: str
-    value: Any
-    stable_value_key: str
-    text_views: dict[str, str]
-
-    def __post_init__(self) -> None:
-        if len(self.source.row_ids) != 1 or len(self.source.columns) != 1:
-            raise ValueError("a cell fact source must identify exactly one cell")
-
-    @property
-    def dataset_id(self) -> str:
-        """Return the fact's source dataset."""
-
-        return self.source.dataset_id
-
-    @property
-    def row_id(self) -> str:
-        """Return the fact's source row."""
-
-        return self.source.row_ids[0]
-
-    @property
-    def column_name(self) -> str:
-        """Return the fact's source column."""
-
-        return self.source.columns[0]

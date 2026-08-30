@@ -1,21 +1,20 @@
 # TableSuite-1K
 
-**A source-grounded benchmark for predictive and language-grounded tabular
-intelligence over 1,000 OpenML-referenced datasets.**
+**Benchmarking predictive and language-grounded tabular intelligence across
+1,000 OpenML-referenced datasets.**
 
-TableSuite-1K evaluates three complementary capabilities:
+TableSuite-1K evaluates three capabilities through one source-grounded API:
 
-1. **Prediction:** infer a registered target from zero/few-shot rows or a
-   serialized table.
-2. **Table grounding:** retrieve or summarize facts from the table shown in
-   the request.
-3. **Table question answering:** execute typed operations over a displayed
-   subtable.
+| Task | Model input | What is scored |
+| --- | --- | --- |
+| Table prediction | ICL rows or a partially labelled serialized table | classification and regression |
+| Table grounding | a provided table plus a lookup/comprehension question | exact facts from that table |
+| Table question answering | a provided subtable plus a typed operation question | programmatic aggregate or lookup answers |
 
-The Hugging Face dataset stores source metadata and value-free task plans.
-OpenML remains the source-table distributor. Questions and gold answers are
-created deterministically after a user materializes the referenced tables;
-benchmark gold is never authored by an LLM.
+The Hugging Face release contains compact metadata and value-free task plans.
+It does **not** redistribute OpenML tables. Questions and gold answers are
+materialized deterministically from the user's local source tables; no LLM
+authors benchmark gold.
 
 ## Install
 
@@ -24,20 +23,23 @@ pip install \
   'tablesuite[local,hf,openml] @ git+https://github.com/Sichao-Li/TableSuite-1K.git@v2.1.0'
 ```
 
-## Quickstart
+## 1. Materialize Source Tables
 
-Materialize an explicitly selected source table:
+Download only the datasets you intend to use:
 
 ```bash
 tablesuite fetch-openml \
   --reference Lester1996/TableSuite-1K \
-  --revision v2.0.0 \
+  --revision v2.1.0 \
   --output openml-parquet \
   --dataset-id openml_45069 \
   --accept-source-terms
 ```
 
-Open the suite and load one official task split:
+OpenML remains the source-table distributor. The command records source notices
+locally and never writes source values into the benchmark reference.
+
+## 2. Open The Suite
 
 ```python
 from tablesuite import TableSuite
@@ -45,10 +47,67 @@ from tablesuite import TableSuite
 suite = TableSuite.open(
     "Lester1996/TableSuite-1K",
     source="openml-parquet",
-    revision="v2.0.0",
+    revision="v2.1.0",
 )
-print([task.name for task in suite.tasks()])
+print(suite.catalog_summary())
+print(suite.tasks())
+```
 
+## 3. Run A Task
+
+### Table Prediction
+
+The same frozen queries can be presented as row demonstrations or as one
+serialized table. `support` is the fraction of eligible non-query rows whose
+labels are visible; no model parameter updates are part of the protocol.
+
+```python
+from tablesuite import render_icl_prediction
+
+task = suite.prediction(
+    "icl",
+    support=(0.0, 0.1, 0.3),
+    dataset_ids=("openml_45069",),
+    max_episodes_per_dataset=1,
+)
+
+predictions = {}
+for example in task:
+    prompt = render_icl_prediction(example.request).input_text
+    predictions[example.request.request_id] = model(prompt)
+
+report = task.evaluate(predictions)
+print(report.to_dict())
+```
+
+Use `"serialized_table"` with `render_serialized_table_prediction` for the
+matched table interface. The official support-capacity schedule is
+`0/10/30/50/70/90/100%` and is exported as `OFFICIAL_SUPPORT_LEVELS`.
+
+For a model-specific context limit, request one maximum support cap and fit the
+largest nested prefix using the model's **actual** tokenizer and chat template:
+
+```python
+candidate = suite.prediction(
+    "serialized_table",
+    support=1.0,
+    dataset_ids=("openml_45069",),
+)
+fitted = candidate.fit_context(
+    max_prompt_tokens=32_768,
+    count_tokens=count_final_model_prompt,
+    tokenizer_id="model-name@revision",
+)
+
+print(fitted.report.to_dict())  # includes support, tokens, and exclusions
+```
+
+Requests that do not fit at zero support are explicitly excluded; TableSuite
+never silently truncates a prediction request.
+
+### Table Grounding And QA
+
+```python
 task = suite.official(
     "table_grounding",
     split="dataset_test",
@@ -58,109 +117,41 @@ task = suite.official(
 example = task[0]
 print(example.prompt)
 print(task.score(example.id, model(example.prompt)))
+
+responses = {item.id: model(item.prompt) for item in task}
+print(task.evaluate(responses).to_dict())
 ```
 
-Evaluate a complete split or an explicit dataset subset:
-
-```python
-predictions = {example.id: model(example.prompt) for example in task}
-report = task.evaluate(predictions)
-print(report.to_dict())
-```
-
-Missing predictions fail official evaluation. `allow_partial=True` is
-available only for diagnostic runs.
-
-Prediction uses one deterministic support pool per frozen query episode. A
-single fraction runs one condition; a tuple runs a nested support curve:
-
-```python
-from tablesuite import render_icl_prediction
-
-prediction = suite.prediction(
-    "icl",
-    support=(0.1, 0.3),
-    dataset_ids=("openml_45069",),
-    max_episodes_per_dataset=1,
-)
-for case in prediction:
-    print(case.support)
-    print(render_icl_prediction(case.request).input_text)
-```
-
-`support=0.1` runs only 10%. Python's `(0.1)` is also a scalar; `(0.1,)`
-is the equivalent one-element tuple. The official curve is exported as
-`OFFICIAL_SUPPORT_LEVELS`.
-
-## Public Configurations
-
-| Configuration | Purpose |
-| --- | --- |
-| `datasets` | OpenML source, schema, target, split, and license metadata |
-| `table_prediction_tasks` | prediction-eligible datasets and metrics |
-| `prediction_episodes` | frozen query anchors and fixed-4/16/32 compatibility records |
-| `grounding_tasks` | eligible non-target columns and sampling policy |
-| `table_grounding` | official provided-table lookup/comprehension plans |
-| `table_question_answering` | official programmatic QA plans |
-
-The catalog contains 1,000 datasets. Task-specific eligibility is reported
-separately; users may select one dataset, a subset, or the full catalog.
+Replace `table_grounding` with `table_question_answering` for aggregate and
+multi-step table operations. Missing responses fail official evaluation;
+`allow_partial=True` is diagnostic only.
 
 ## Task Contracts
 
 ### Prediction
 
-Prediction is inference-only. No fitting, fine-tuning, or per-dataset
-parameter updates are part of an official run.
+Each frozen query has one deterministic support ordering. Every percentage is
+a prefix of that ordering, so support conditions are nested and the ICL and
+serialized-table interfaces receive the same source rows. For a pool of size
+`N`, positive fraction `p` exposes `min(N, max(1, ceil(p*N)))` labels.
 
-| Protocol | Input | Visible labels |
-| --- | --- | --- |
-| `icl` | labelled row demonstrations plus fixed queries | selected support fraction |
-| `serialized_table` | one table with labelled support and fixed masked queries | selected support fraction |
-
-For a support pool of size `N`, fraction zero exposes no labels and every
-positive fraction exposes `min(N, max(1, ceil(fraction * N)))` labels. The same
-nested source rows are used by both interfaces. Query labels always remain
-private. At 100%, every eligible non-query row is visible as support.
-
-Every request states its task family. Classification requests also state the
-allowed target-label vocabulary; zero-label means that no source row carries a
-visible label assignment, not that the output space is undefined.
-
-The fixed v2.0 4/16/32-shot records remain reproducible through
-`suite.fixed_prediction(...)` and the lower-level `Benchmark.select(...)` API.
+Classification reports dataset-macro accuracy, balanced accuracy, and macro-F1.
+Regression reports dataset-macro MAE, RMSE, normalized errors, and R-squared.
+Every result should include response coverage, requested and realized support,
+prompt-token counts, and the model context limit.
 
 ### Table Grounding
 
-Every answer comes only from the table displayed in the request. Official v2
-operations are:
-
-```text
-cell_lookup
-row_lookup
-column_values
-distinct_values
-value_counts
-```
-
-Source rows receive deterministic local aliases (`r0`, `r1`, ...). Column
-names are quoted in questions, including numeric or otherwise ambiguous
-headers. The v2 release uses literal source-schema wording and records this as
-`schema_language="literal"`; it does not claim curated cross-dataset ontology
-mapping.
+Answers are restricted to the table shown in the request. Operations are
+`cell_lookup`, `row_lookup`, `column_values`, `distinct_values`, and
+`value_counts`. The release uses literal source headers and makes no claim of a
+curated cross-dataset ontology.
 
 ### Table Question Answering
 
-QA uses 4/8/16-row provided subtables and typed operations:
-
-```text
-count, sum, mean, min, max
-argmax lookup
-filter then argmax lookup
-```
-
-Operation and table size are scheduled independently. Gold and evidence are
-computed programmatically from the exact displayed slice.
+QA uses controlled 4/8/16-row subtables and programmatic `count`, `sum`, `mean`,
+`min`, `max`, argmax lookup, and filter-then-argmax operations. Gold and evidence
+are computed from the exact displayed slice.
 
 ## Evaluation Splits
 
@@ -174,10 +165,23 @@ computed programmatically from the exact displayed slice.
 
 Dataset partitions are assigned by `dedup_cluster_id`, not raw dataset ID.
 
-## Generate Additional Plans
+## Hugging Face Configurations
 
-Official evaluation uses frozen Hugging Face plans. Training and stress-test
-plans can be generated with the same deterministic authoring path:
+| Configuration | Purpose |
+| --- | --- |
+| `datasets` | OpenML identity, schema, target, split, and provenance |
+| `table_prediction_tasks` | prediction eligibility and primary metrics |
+| `prediction_episodes` | frozen query anchors and v2 fixed-shot compatibility records |
+| `table_grounding` | official provided-table grounding plans |
+| `table_question_answering` | official programmatic QA plans |
+
+No configuration contains feature values, targets, rendered questions, gold
+answers, responses, embeddings, checkpoints, or experiment logs.
+
+## Generate Additional Training Plans
+
+Official evaluation uses frozen Hugging Face plans. Additional deterministic
+training or stress-test plans use the same operation engine:
 
 ```python
 generated = suite.generate(
@@ -190,18 +194,15 @@ generated = suite.generate(
 generated.save("generated-qa")
 ```
 
-Saved bundles contain only plans and a reproducibility manifest. Generated
-plans never replace the official evaluation set.
+Generated plans must be reported separately from official evaluation.
 
-## Source Boundary
+## Stable Public API
 
-TableSuite-1K does not redistribute source table values. Each OpenML dataset
-retains its upstream terms; `openml_license_claim` is provenance metadata, not
-a license granted by this repository. Explicit source selection and
-`--accept-source-terms` are required before download.
-
-The repository contains no model weights, embeddings, raw OpenML tables,
-cluster launch scripts, model outputs, leaderboard, or LLM reasoner.
+Start with `TableSuite`. The stable task surfaces are
+`TableSuite.prediction`, `TableSuite.official`, and `TableSuite.generate`.
+Renderer, report, and source-materialization helpers are exported from the
+package root. Lower-level catalog and authoring modules are implementation
+details and may change between minor releases.
 
 ## Development
 
@@ -210,5 +211,5 @@ python -m pytest -q
 ruff check src tests examples
 ```
 
-See [docs/PROTOCOLS.md](docs/PROTOCOLS.md) for task semantics and
-[docs/RELEASING.md](docs/RELEASING.md) for the audited release process.
+See [protocols](docs/PROTOCOLS.md), the [reference format](docs/REFERENCE_FORMAT.md),
+and the [source-data policy](docs/SOURCE_DATA.md) for the full contracts.

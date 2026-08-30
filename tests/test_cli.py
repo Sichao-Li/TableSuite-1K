@@ -32,118 +32,60 @@ def test_cli_module_entrypoint(benchmark_fixture: tuple[Path, Path]) -> None:
     assert json.loads(result.stdout)["datasets"] == 2
 
 
-def test_cli_info_select_and_preview(
+def test_cli_info_and_prediction_preview(
     benchmark_fixture: tuple[Path, Path],
-    tmp_path: Path,
     capsys,
 ) -> None:
     reference, source = benchmark_fixture
     main(["info", "--reference", str(reference)])
     assert json.loads(capsys.readouterr().out)["datasets"] == 2
 
-    manifest = tmp_path / "selection.json"
     main(
         [
-            "select",
+            "prediction",
             "--reference",
             str(reference),
             "--source",
             str(source),
-            "--task",
-            "few_shot_icl",
-            "--output",
-            str(manifest),
-        ]
-    )
-    assert manifest.is_file()
-    assert json.loads(capsys.readouterr().out)["eligible_episodes"] == 1
-
-    main(
-        [
-            "preview",
-            "--reference",
-            str(reference),
-            "--source",
-            str(source),
-            "--task",
-            "zero_label_serialized_table",
+            "--protocol",
+            "icl",
+            "--support",
+            "0.5",
             "--dataset-id",
             "openml_1",
-            "--view",
-            "key_value",
+            "--max-episodes-per-dataset",
+            "1",
             "--limit",
             "1",
         ]
     )
     output = capsys.readouterr().out
-    assert 'Predict "Default" for every row.' in output
-    assert "Age =" in output
+    assert "Row A: Age=" in output
+    assert "Query q0:" in output
 
     main(
         [
-            "preview",
+            "prediction",
             "--reference",
             str(reference),
             "--source",
             str(source),
-            "--task",
-            "partially_labeled_serialized_table",
+            "--protocol",
+            "serialized_table",
+            "--support",
+            "0.5",
             "--dataset-id",
             "openml_1",
-            "--shots",
-            "4",
+            "--max-episodes-per-dataset",
+            "1",
             "--limit",
             "1",
         ]
     )
     output = capsys.readouterr().out
     assert 'Predict "Default" for rows where the target is masked.' in output
-    assert "| r0 | 20 | 100 | 0 |" in output
-    assert "| r4 | 24 | 500 | ? |" in output
-
-    main(
-        [
-            "preview",
-            "--reference",
-            str(reference),
-            "--source",
-            str(source),
-            "--task",
-            "grounding",
-            "--dataset-id",
-            "openml_1",
-            "--view",
-            "key_value",
-            "--limit",
-            "1",
-        ]
-    )
-    output = capsys.readouterr().out
-    assert " = " in output
-    assert '"text_views"' not in output
-
-    main(
-        [
-            "table",
-            "--reference",
-            str(reference),
-            "--source",
-            str(source),
-            "--dataset-id",
-            "openml_1",
-            "--row-id",
-            "1",
-            "--row-id",
-            "3",
-            "--column",
-            "Age",
-            "--column",
-            "Income",
-        ]
-    )
-    table_output = capsys.readouterr().out
-    assert "| Age | Income |" in table_output
-    assert "| 21 | 200 |" in table_output
+    assert "| Default |" in output
+    assert "| ? |" in output
 
 
 def test_cli_bounds_openml_download(

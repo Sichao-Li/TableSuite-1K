@@ -1,20 +1,16 @@
 # Publishing A Benchmark Release
 
-This checklist publishes the value-free benchmark definition, not the OpenML
-source tables or research artifacts.
+This is the maintainer checklist for the value-free benchmark definition. It
+never uploads OpenML source tables or experiment artifacts.
 
 ## Release Identity
 
 - GitHub: `Sichao-Li/TableSuite-1K`
 - Hugging Face: `Lester1996/TableSuite-1K`
-- Python distribution and CLI: `tablesuite`
-- release tag: `v2.0.0`
+- Python package and CLI: `tablesuite`
+- release tag: `v2.1.0`
 
-The first Hub upload remains private until all six configurations pass the
-fresh-cache validation below. Add the associated paper citation when its
-bibliographic metadata is final.
-
-## Clean-Room Build
+## Clean Build
 
 ```bash
 python -m venv .venv
@@ -26,70 +22,83 @@ python -m pytest -q
 ruff check src tests examples
 
 tablesuite build-release \
-  --reference /path/to/reference-package \
+  --reference /path/to/prior-reference \
   --source /path/to/openml-parquet \
   --dataset-card huggingface/README.md \
-  --output /path/to/huggingface-release \
+  --output /path/to/tablesuite-v2.1 \
   > /path/to/release-audit.json
 
 tablesuite validate-release \
-  --release /path/to/huggingface-release
+  --release /path/to/tablesuite-v2.1 \
+  --source /path/to/openml-parquet
 ```
 
-`build-release` already executes every official task plan against the source;
-the second command is a fast structural recheck. Keep `release-audit.json`
-outside the upload directory. The release directory contains only the dataset
-card, compact reference summary, and six configured datasets. It must not
-contain OpenML source Parquet files, model outputs, prediction packets,
-embeddings, checkpoints, logs, audits, or experiment reports.
+`build-release` reconstructs and executes every official semantic task. Keep
+the audit JSON outside the upload directory.
 
-## Hub Upload
+## Required Payload
 
-Use a write-scoped token through the current Hugging Face CLI. Do not put the
-token in a script or commit.
+The upload contains only:
+
+```text
+README.md
+reference_summary.json
+datasets/
+table_prediction_tasks/
+prediction_episodes/
+tasks/table_grounding/
+tasks/table_question_answering/
+```
+
+Reject the build if it contains source values, labels, rendered questions,
+answers, model outputs, caches, logs, checkpoints, or experiment reports.
+
+## Private Staging
+
+Upload first to a private staging dataset repository. Use a write-scoped token
+from the Hugging Face CLI; never place it in a script or commit.
 
 ```bash
-python -m pip install --upgrade huggingface_hub
 hf auth login
-
-REPO='Lester1996/TableSuite-1K'
-hf repos create "$REPO" --repo-type dataset --private
-hf upload "$REPO" /path/to/huggingface-release . \
+hf upload Lester1996/TableSuite-1K-v2.1-staging \
+  /path/to/tablesuite-v2.1 . \
   --repo-type dataset \
-  --commit-message 'TableSuite-1K v2.0.0 release candidate'
+  --commit-message 'TableSuite-1K v2.1 release candidate'
 ```
 
-`hf upload` is resumable and is the current replacement for the deprecated
-`hf upload-large-folder` command. Keep the repository private until all six
-configurations load in a fresh cache.
-
-## Hub Validation
+From a fresh cache, require exactly these five configs:
 
 ```python
 from datasets import get_dataset_config_names, load_dataset
 
-repository = "Lester1996/TableSuite-1K"
+repository = "Lester1996/TableSuite-1K-v2.1-staging"
 expected = {
     "datasets",
     "table_prediction_tasks",
     "prediction_episodes",
-    "grounding_tasks",
     "table_grounding",
     "table_question_answering",
 }
 assert set(get_dataset_config_names(repository)) == expected
-
 for name in sorted(expected):
-    dataset = load_dataset(repository, name)
-    assert dataset
+    assert load_dataset(repository, name)
 ```
 
-Also run one `load_task` example for each executable configuration against a
-small locally materialized OpenML subset. Then record the immutable Hub commit
-revision used by the paper and make the dataset repository public.
+Also materialize and score at least one grounding item, one QA item, one ICL
+request, and one serialized-table request against local source data.
 
-Current Hugging Face references:
+## Publication
 
-- <https://huggingface.co/docs/huggingface_hub/en/guides/cli>
+After staging passes:
+
+1. upload the exact staged tree to the public dataset repository;
+2. delete stale remote files, especially retired configurations;
+3. tag the validated Hub commit `v2.1.0`;
+4. tag the matching GitHub commit `v2.1.0`;
+5. repeat the five-config and task smoke tests anonymously with no token;
+6. record both immutable revisions with every reported experiment.
+
+Relevant documentation:
+
 - <https://huggingface.co/docs/huggingface_hub/en/guides/upload>
 - <https://huggingface.co/docs/datasets/create_dataset>

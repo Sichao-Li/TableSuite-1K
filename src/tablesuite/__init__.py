@@ -1,7 +1,5 @@
-"""Public API for TableSuite-1K's Hugging Face-hosted table tasks."""
+"""Stable public API for TableSuite-1K."""
 
-from tablesuite.benchmark import Benchmark, BenchmarkSubset
-from tablesuite.catalog import Catalog
 from tablesuite.generation import (
     GeneratedTaskDataset,
     GenerationManifest,
@@ -10,15 +8,20 @@ from tablesuite.generation import (
 )
 from tablesuite.prediction import (
     OFFICIAL_SUPPORT_LEVELS,
+    BudgetedPredictionDataset,
+    ContextBudgetReport,
+    ContextFit,
     PredictionDataset,
+    PredictionExample,
     PredictionInterface,
     PredictionManifest,
-    normalize_support_fractions,
-    resolve_support_level,
+)
+from tablesuite.prediction_evaluation import (
+    PredictionFamilyReport,
+    PredictionReport,
+    evaluate_predictions,
 )
 from tablesuite.registry import (
-    FixedPredictionProtocol,
-    PredictionProtocol,
     PublicTaskName,
     TaskDescriptor,
     describe_task,
@@ -29,7 +32,7 @@ from tablesuite.rendering import (
     render_serialized_table_prediction,
     render_table,
 )
-from tablesuite.source import ParquetSource, materialize_openml_sources
+from tablesuite.source import materialize_openml_sources
 from tablesuite.suite import TableSuite
 from tablesuite.tasks import (
     TaskDataset,
@@ -39,20 +42,14 @@ from tablesuite.tasks import (
     load_task,
 )
 from tablesuite.types import (
-    CellFact,
     DatasetSpec,
     ICLPredictionExample,
     ICLPredictionRequest,
-    ICLProtocol,
     MaterializedTableSlice,
     PredictionGold,
     RenderedPrediction,
-    Selection,
-    SelectionManifest,
     SerializedTablePredictionExample,
     SerializedTablePredictionRequest,
-    SerializedTableProtocol,
-    SerializedTableScope,
     SupportLevel,
     TableSlice,
 )
@@ -60,33 +57,27 @@ from tablesuite.types import (
 __version__ = "2.1.0"
 
 __all__ = [
-    "Benchmark",
-    "BenchmarkSubset",
-    "Catalog",
-    "CellFact",
+    "BudgetedPredictionDataset",
+    "ContextBudgetReport",
+    "ContextFit",
     "DatasetSpec",
-    "FixedPredictionProtocol",
     "GeneratedTaskDataset",
     "GenerationManifest",
     "ICLPredictionExample",
     "ICLPredictionRequest",
-    "ICLProtocol",
     "MaterializedTableSlice",
     "OFFICIAL_SUPPORT_LEVELS",
-    "ParquetSource",
     "PredictionDataset",
+    "PredictionExample",
+    "PredictionFamilyReport",
     "PredictionGold",
     "PredictionInterface",
     "PredictionManifest",
-    "PredictionProtocol",
+    "PredictionReport",
     "PublicTaskName",
     "RenderedPrediction",
-    "Selection",
-    "SelectionManifest",
     "SerializedTablePredictionExample",
     "SerializedTablePredictionRequest",
-    "SerializedTableProtocol",
-    "SerializedTableScope",
     "SupportLevel",
     "TableSlice",
     "TableSuite",
@@ -96,15 +87,14 @@ __all__ = [
     "TaskReport",
     "TaskScore",
     "describe_task",
+    "evaluate_predictions",
     "generate_task",
     "list_tasks",
     "load_task",
     "load_generated_task",
     "materialize_openml_sources",
-    "normalize_support_fractions",
     "render_icl_prediction",
     "render_serialized_table_prediction",
     "render_table",
-    "resolve_support_level",
     "__version__",
 ]

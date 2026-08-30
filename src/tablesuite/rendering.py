@@ -17,18 +17,6 @@ ICL_SERIALIZATION_VERSION = "icl_rows_v2"
 TABLE_PREDICTION_SERIALIZATION_VERSION = "serialized_table_v2"
 
 
-def render_cell_fact_views(column: str, value: Any) -> dict[str, str]:
-    """Return deterministic text views of one source cell fact."""
-
-    rendered = _display(normalize_value(value))
-    return {
-        "key_value": f"{column} = {rendered}",
-        "json": canonical_json({"column": column, "value": normalize_value(value)}),
-        "markdown": _render_rows([{column: value}], [column], "markdown"),
-        "natural_language": f"The value of {column} is {rendered}.",
-    }
-
-
 def render_icl_prediction(
     request: ICLPredictionRequest,
 ) -> RenderedPrediction:

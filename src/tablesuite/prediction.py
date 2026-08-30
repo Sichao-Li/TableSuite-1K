@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from numbers import Real
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from tablesuite._util import canonical_json, stable_id, stable_order, valid_target
+from tablesuite._util import (
+    canonical_json,
+    normalize_value,
+    stable_id,
+    stable_order,
+    valid_target,
+)
 from tablesuite.source import ParquetSource
 from tablesuite.types import (
     DatasetSpec,
@@ -22,7 +28,11 @@ from tablesuite.types import (
     TableSlice,
 )
 
+if TYPE_CHECKING:
+    from tablesuite.prediction_evaluation import PredictionReport
+
 PredictionInterface = Literal["icl", "serialized_table"]
+PredictionExample = ICLPredictionExample | SerializedTablePredictionExample
 OFFICIAL_SUPPORT_LEVELS = (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
 PREDICTION_PLAN_VERSION = "fractional_support_v1"
 
@@ -41,6 +51,99 @@ class PredictionManifest:
         """Return a JSON-compatible manifest."""
 
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextFit:
+    """One context-budget decision for a frozen prediction query."""
+
+    episode_id: str
+    dataset_id: str
+    included: bool
+    prompt_tokens: int
+    support: SupportLevel
+    request_id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ContextBudgetReport:
+    """Auditable coverage for model-specific context fitting."""
+
+    max_prompt_tokens: int
+    tokenizer_id: str
+    decisions: tuple[ContextFit, ...]
+
+    @property
+    def total(self) -> int:
+        """Return the number of frozen query episodes considered."""
+
+        return len(self.decisions)
+
+    @property
+    def included(self) -> int:
+        """Return the number of requests that fit the prompt budget."""
+
+        return sum(item.included for item in self.decisions)
+
+    @property
+    def coverage(self) -> float:
+        """Return the fraction of requests that fit the prompt budget."""
+
+        return self.included / self.total if self.total else 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible context report."""
+
+        return {
+            "max_prompt_tokens": self.max_prompt_tokens,
+            "tokenizer_id": self.tokenizer_id,
+            "total": self.total,
+            "included": self.included,
+            "coverage": self.coverage,
+            "decisions": [asdict(item) for item in self.decisions],
+        }
+
+
+class BudgetedPredictionDataset(Sequence[PredictionExample]):
+    """Prediction requests fitted to one explicit model prompt budget."""
+
+    def __init__(
+        self,
+        examples: tuple[PredictionExample, ...],
+        *,
+        datasets: tuple[DatasetSpec, ...],
+        report: ContextBudgetReport,
+    ) -> None:
+        self._examples = examples
+        self.datasets = datasets
+        self.report = report
+
+    def __len__(self) -> int:
+        return len(self._examples)
+
+    def __getitem__(self, index: int) -> PredictionExample:
+        return self._examples[index]
+
+    def __iter__(self) -> Iterator[PredictionExample]:
+        return iter(self._examples)
+
+    def evaluate(
+        self,
+        predictions: Mapping[str, Any],
+        *,
+        allow_partial: bool = False,
+    ) -> PredictionReport:
+        """Evaluate included requests; context exclusions remain in ``report``."""
+
+        from tablesuite.prediction_evaluation import evaluate_predictions
+
+        return evaluate_predictions(
+            self,
+            predictions,
+            datasets=self.datasets,
+            allow_partial=allow_partial,
+        )
 
 
 @dataclass(frozen=True)
@@ -72,6 +175,7 @@ class PredictionDataset:
         self.support_fractions = normalize_support_fractions(support)
         self.source = source
         self._datasets = {dataset.dataset_id: dataset for dataset in datasets}
+        self._class_labels: dict[str, tuple[Any, ...]] = {}
         self._plans = _prediction_plans(
             episodes,
             max_episodes_per_dataset=max_episodes_per_dataset,
@@ -100,7 +204,7 @@ class PredictionDataset:
 
     def __iter__(
         self,
-    ) -> Iterator[ICLPredictionExample | SerializedTablePredictionExample]:
+    ) -> Iterator[PredictionExample]:
         for plan in self._plans:
             dataset = self._datasets[plan.dataset_id]
             rows = self.source.rows(dataset)
@@ -122,6 +226,63 @@ class PredictionDataset:
                         plan, dataset, support_row_ids, level
                     )
 
+    def fit_context(
+        self,
+        *,
+        max_prompt_tokens: int,
+        count_tokens: Callable[[str], int],
+        tokenizer_id: str,
+    ) -> BudgetedPredictionDataset:
+        """Fit the largest nested support prefix under a real prompt budget.
+
+        The dataset must contain one requested support fraction, which acts as
+        the maximum support cap. The token counter must measure the actual model
+        prompt, including any chat template or system text used at inference.
+        Requests whose zero-support form does not fit are retained in the report
+        as exclusions and are never silently truncated.
+        """
+
+        if len(self.support_fractions) != 1:
+            raise ValueError("context fitting requires exactly one support fraction")
+        if max_prompt_tokens <= 0:
+            raise ValueError("max_prompt_tokens must be positive")
+        if not tokenizer_id.strip():
+            raise ValueError("tokenizer_id cannot be empty")
+
+        examples: list[PredictionExample] = []
+        decisions: list[ContextFit] = []
+        cap_fraction = self.support_fractions[0]
+        for plan in self._plans:
+            dataset = self._datasets[plan.dataset_id]
+            rows = self.source.rows(dataset)
+            support_pool = _ordered_support_rows(
+                dataset,
+                rows,
+                query_row_ids=plan.query_row_ids,
+                seed=self._seed,
+            )
+            example, decision = self._fit_plan(
+                plan,
+                dataset,
+                support_pool,
+                cap_fraction=cap_fraction,
+                max_prompt_tokens=max_prompt_tokens,
+                count_tokens=count_tokens,
+            )
+            decisions.append(decision)
+            if example is not None:
+                examples.append(example)
+        report = ContextBudgetReport(
+            max_prompt_tokens=max_prompt_tokens,
+            tokenizer_id=tokenizer_id,
+            decisions=tuple(decisions),
+        )
+        return BudgetedPredictionDataset(
+            tuple(examples),
+            datasets=self.datasets,
+            report=report,
+        )
+
     def summary(self) -> dict[str, Any]:
         """Return compact plan metadata without materializing source tables."""
 
@@ -134,15 +295,37 @@ class PredictionDataset:
             "plan_version": self.manifest.plan_version,
         }
 
+    def evaluate(
+        self,
+        predictions: Mapping[str, Any],
+        *,
+        allow_partial: bool = False,
+    ) -> PredictionReport:
+        """Evaluate structured values in each request's query-row order."""
+
+        from tablesuite.prediction_evaluation import evaluate_predictions
+
+        return evaluate_predictions(
+            self,
+            predictions,
+            datasets=self.datasets,
+            allow_partial=allow_partial,
+        )
+
     def _icl_example(
         self,
         plan: _PredictionPlan,
         dataset: DatasetSpec,
         support_row_ids: tuple[str, ...],
         level: SupportLevel,
+        request_id: str | None = None,
     ) -> ICLPredictionExample:
         protocol = "few_shot_icl" if level.count else "zero_shot_icl"
-        request_id = _request_id(plan.plan_id, self.protocol, level.requested_fraction)
+        request_id = request_id or _request_id(
+            plan.plan_id,
+            self.protocol,
+            level.requested_fraction,
+        )
         demonstrations = (
             self.source.materialize(
                 dataset,
@@ -172,6 +355,7 @@ class PredictionDataset:
             target_column=dataset.target_column,
             query=query,
             shots=level.count,
+            class_labels=self._labels(dataset),
             demonstrations=demonstrations,
         )
         targets = tuple(
@@ -192,13 +376,18 @@ class PredictionDataset:
         dataset: DatasetSpec,
         support_row_ids: tuple[str, ...],
         level: SupportLevel,
+        request_id: str | None = None,
     ) -> SerializedTablePredictionExample:
         protocol = (
             "partially_labeled_serialized_table"
             if level.count
             else "zero_label_serialized_table"
         )
-        request_id = _request_id(plan.plan_id, self.protocol, level.requested_fraction)
+        request_id = request_id or _request_id(
+            plan.plan_id,
+            self.protocol,
+            level.requested_fraction,
+        )
         table_row_ids = (*support_row_ids, *plan.query_row_ids)
         table = self.source.materialize(
             dataset,
@@ -225,6 +414,7 @@ class PredictionDataset:
             task_family=dataset.task_family,
             target_column=dataset.target_column,
             table=table,
+            class_labels=self._labels(dataset),
             visible_labels=visible_labels,
         )
         targets = tuple(
@@ -235,6 +425,105 @@ class PredictionDataset:
             request=request,
             gold=PredictionGold(request_id, targets),
             support=level,
+        )
+
+    def _labels(self, dataset: DatasetSpec) -> tuple[Any, ...]:
+        if dataset.task_family == "regression":
+            return ()
+        labels = self._class_labels.get(dataset.dataset_id)
+        if labels is None:
+            labels = _classification_labels(dataset, self.source.rows(dataset))
+            self._class_labels[dataset.dataset_id] = labels
+        return labels
+
+    def _fit_plan(
+        self,
+        plan: _PredictionPlan,
+        dataset: DatasetSpec,
+        support_pool: tuple[str, ...],
+        *,
+        cap_fraction: float,
+        max_prompt_tokens: int,
+        count_tokens: Callable[[str], int],
+    ) -> tuple[PredictionExample | None, ContextFit]:
+        cap = resolve_support_level(cap_fraction, len(support_pool)).count
+        cache: dict[int, tuple[PredictionExample, int]] = {}
+
+        def materialize(count: int) -> tuple[PredictionExample, int]:
+            cached = cache.get(count)
+            if cached is not None:
+                return cached
+            level = SupportLevel(cap_fraction, len(support_pool), count)
+            request_id = _budget_request_id(
+                plan.plan_id,
+                self.protocol,
+                max_prompt_tokens,
+                count,
+            )
+            if self.protocol == "icl":
+                example = self._icl_example(
+                    plan,
+                    dataset,
+                    support_pool[:count],
+                    level,
+                    request_id,
+                )
+            else:
+                example = self._serialized_example(
+                    plan,
+                    dataset,
+                    support_pool[:count],
+                    level,
+                    request_id,
+                )
+            prompt_tokens = _count_prompt_tokens(example, count_tokens)
+            cache[count] = (example, prompt_tokens)
+            return cache[count]
+
+        zero, zero_tokens = materialize(0)
+        if zero_tokens > max_prompt_tokens:
+            return None, ContextFit(
+                episode_id=plan.plan_id,
+                dataset_id=dataset.dataset_id,
+                included=False,
+                prompt_tokens=zero_tokens,
+                support=zero.support or SupportLevel(cap_fraction, len(support_pool), 0),
+                reason="zero_support_exceeds_prompt_budget",
+            )
+
+        best_count = 0
+        upper = 1
+        overflow: int | None = None
+        while upper <= cap:
+            _, tokens = materialize(upper)
+            if tokens <= max_prompt_tokens:
+                best_count = upper
+                if upper == cap:
+                    break
+                upper = min(cap, upper * 2)
+                continue
+            overflow = upper
+            break
+        if overflow is not None:
+            low, high = best_count + 1, overflow - 1
+            while low <= high:
+                middle = (low + high) // 2
+                _, tokens = materialize(middle)
+                if tokens <= max_prompt_tokens:
+                    best_count = middle
+                    low = middle + 1
+                else:
+                    high = middle - 1
+
+        selected, prompt_tokens = materialize(best_count)
+        return selected, ContextFit(
+            episode_id=plan.plan_id,
+            dataset_id=dataset.dataset_id,
+            included=True,
+            prompt_tokens=prompt_tokens,
+            support=selected.support
+            or SupportLevel(cap_fraction, len(support_pool), best_count),
+            request_id=selected.request.request_id,
         )
 
 
@@ -349,15 +638,67 @@ def _ordered_support_rows(
     return tuple(output)
 
 
+def _classification_labels(
+    dataset: DatasetSpec,
+    rows: Iterable[dict[str, Any]],
+) -> tuple[Any, ...]:
+    labels = {
+        canonical_json(normalize_value(row[dataset.target_column])): normalize_value(
+            row[dataset.target_column]
+        )
+        for row in rows
+        if valid_target(row[dataset.target_column], dataset.task_family)
+    }
+    ordered = tuple(labels[key] for key in sorted(labels))
+    if not ordered:
+        raise ValueError(f"{dataset.dataset_id}: classification label space is empty")
+    return ordered
+
+
 def _request_id(plan_id: str, protocol: str, fraction: float) -> str:
     level = format(fraction, ".6f").rstrip("0").rstrip(".").replace(".", "p")
     return f"{plan_id}:{protocol}:support_{level or '0'}"
 
 
+def _budget_request_id(
+    plan_id: str,
+    protocol: str,
+    max_prompt_tokens: int,
+    support_count: int,
+) -> str:
+    return (
+        f"{plan_id}:{protocol}:budget_{max_prompt_tokens}:support_{support_count}"
+    )
+
+
+def _count_prompt_tokens(
+    example: PredictionExample,
+    count_tokens: Callable[[str], int],
+) -> int:
+    from tablesuite.rendering import (
+        render_icl_prediction,
+        render_serialized_table_prediction,
+    )
+
+    rendered = (
+        render_icl_prediction(example.request)
+        if isinstance(example, ICLPredictionExample)
+        else render_serialized_table_prediction(example.request)
+    )
+    value = count_tokens(rendered.input_text)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise TypeError("count_tokens must return a non-negative integer")
+    return value
+
+
 __all__ = [
     "OFFICIAL_SUPPORT_LEVELS",
     "PREDICTION_PLAN_VERSION",
+    "BudgetedPredictionDataset",
+    "ContextBudgetReport",
+    "ContextFit",
     "PredictionDataset",
+    "PredictionExample",
     "PredictionInterface",
     "PredictionManifest",
     "normalize_support_fractions",

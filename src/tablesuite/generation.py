@@ -175,7 +175,7 @@ def generate_task(
     catalog = _load_catalog(reference, revision)
     selected = catalog.select(
         Selection(
-            tasks=("grounding",),
+            tasks=(),
             dataset_ids=tuple(str(value) for value in dataset_ids),
             dataset_splits=(_dataset_partition(split),),
             task_families=tuple(task_families),

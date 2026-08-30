@@ -32,11 +32,10 @@ from tablesuite.task_records import (
     task_arrow_schema,
     task_registry,
 )
-from tablesuite.types import Selection
 
 TASK_CONFIGS = ("table_grounding", "table_question_answering")
 RELEASE_CONFIGS = (*CONFIGS, *TASK_CONFIGS)
-RELEASE_VERSION = "2.0.1"
+RELEASE_VERSION = "2.1.0"
 REFERENCE_ID = "tablesuite-1k:2.0"
 _GROUNDING_OPERATION_NAMES = (
     "cell_lookup",
@@ -64,7 +63,7 @@ def build_huggingface_release(
     dataset_card: str | Path,
     config: TaskGenerationConfig | None = None,
 ) -> dict[str, Any]:
-    """Create one audited six-configuration Hugging Face release directory.
+    """Create one audited five-configuration Hugging Face release directory.
 
     Source Parquet tables are read to validate operations and compute eligibility,
     but they are never copied into the release.
@@ -82,22 +81,21 @@ def build_huggingface_release(
         tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent)
     )
     try:
-        catalog = Catalog.from_path(reference_path)
         catalog_counts = _write_public_catalog(reference_path, staging)
         public_catalog = Catalog.from_path(staging)
         _validate_public_catalog(public_catalog)
         shutil.copy2(card_path, staging / "README.md")
 
         source = ParquetSource(source_path)
-        generated = generate_task_plans(catalog, source, policy)
+        generated = generate_task_plans(public_catalog, source, policy)
         audit = audit_plans(generated.plans)
         audit.require_passed()
-        _validate_catalog_bindings(catalog, generated.plans)
+        _validate_catalog_bindings(public_catalog, generated.plans)
         _require_release_coverage(generated.task_counts)
         _validate_value_free(generated.plans)
         task_matrix = _task_matrix(generated.plans)
         _validate_task_matrix(task_matrix)
-        executed = _validate_execution(catalog, source, generated.plans)
+        executed = _validate_execution(public_catalog, source, generated.plans)
 
         _write_task_configs(staging, generated.plans, policy.shard_size)
         public_plans = _load_release_plans(staging, public_catalog)
@@ -208,11 +206,21 @@ def _write_public_catalog(
     reference: Path,
     destination: Path,
 ) -> dict[str, int]:
+    legacy_semantic_columns = _legacy_semantic_columns(reference)
+
+    def dataset_record(record: dict[str, Any]) -> dict[str, Any]:
+        migrated = (
+            legacy_semantic_columns.get(str(record["dataset_id"]), ())
+            if legacy_semantic_columns is not None
+            else None
+        )
+        return _dataset_record(record, semantic_columns=migrated)
+
     summaries = {
         "datasets": _rewrite_config(
             _reference_config(reference, "datasets"),
             destination / "datasets",
-            _dataset_record,
+            dataset_record,
             schema=_catalog_arrow_schema("datasets"),
         ),
         "table_prediction_tasks": _rewrite_config(
@@ -226,12 +234,6 @@ def _write_public_catalog(
             destination / "prediction_episodes",
             _prediction_episode_record,
             schema=_catalog_arrow_schema("prediction_episodes"),
-        ),
-        "grounding_tasks": _rewrite_config(
-            _reference_config(reference, "grounding_tasks"),
-            destination / "grounding_tasks",
-            _grounding_record,
-            schema=_catalog_arrow_schema("grounding_tasks"),
         ),
     }
     summary = reference / "reference_summary.json"
@@ -247,7 +249,7 @@ def _write_public_catalog(
         "source_provider": "openml",
         "contains_source_values": False,
         "record_schemas": {
-            "catalog": "1.0",
+            "catalog": "1.1",
             "official_tasks": TASK_RECORD_SCHEMA_VERSION,
         },
         "configs": summaries,
@@ -303,7 +305,27 @@ def _rewrite_config(
     return {"records": total, "splits": split_summaries}
 
 
-def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
+def _dataset_record(
+    record: dict[str, Any],
+    *,
+    semantic_columns: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    features = [str(value) for value in record.get("feature_columns") or []]
+    excluded = [
+        str(value) for value in record.get("excluded_feature_columns") or []
+    ]
+    declared = record.get("semantic_columns")
+    if declared is not None:
+        resolved_semantic = [str(value) for value in declared]
+    elif semantic_columns is not None:
+        resolved_semantic = list(semantic_columns)
+    else:
+        target = str(record["target_column"])
+        resolved_semantic = [
+            column
+            for column in features
+            if column != target and column not in set(excluded)
+        ]
     return {
         "dataset_id": str(record["dataset_id"]),
         "dataset_split": str(record["dataset_split"]),
@@ -314,14 +336,10 @@ def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
         "dataset_name": str(record.get("dataset_name") or record["dataset_id"]),
         "task_type": str(record["task_type"]),
         "target_column": str(record["target_column"]),
-        "feature_columns": [
-            str(value) for value in record.get("feature_columns") or []
-        ],
+        "feature_columns": features,
         "target_transform": str(record.get("target_transform") or "none"),
-        "excluded_feature_columns": [
-            str(value)
-            for value in record.get("excluded_feature_columns") or []
-        ],
+        "excluded_feature_columns": excluded,
+        "semantic_columns": resolved_semantic,
         "source_adaptation_rationale": str(
             record.get("source_adaptation_rationale") or ""
         ),
@@ -339,6 +357,32 @@ def _dataset_record(record: dict[str, Any]) -> dict[str, Any]:
             record.get("openml_license_claim") or record.get("license_claim") or ""
         ),
     }
+
+
+def _legacy_semantic_columns(
+    reference: Path,
+) -> dict[str, tuple[str, ...]] | None:
+    """Read the retired sampler config only while migrating an older release."""
+
+    root = reference / "grounding_tasks"
+    if not root.is_dir():
+        return None
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as error:
+        raise RuntimeError("install tablesuite[local] to author a release") from error
+    files = sorted(root.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"no Parquet shards under {root}")
+    output: dict[str, tuple[str, ...]] = {}
+    for source_file in files:
+        for record in pq.read_table(source_file).to_pylist():
+            dataset_id = str(record["dataset_id"])
+            columns = tuple(str(value) for value in record["eligible_columns"])
+            if dataset_id in output:
+                raise ValueError(f"duplicate grounding contract for {dataset_id!r}")
+            output[dataset_id] = columns
+    return output
 
 
 def _required_alias(record: dict[str, Any], *names: str) -> Any:
@@ -372,21 +416,6 @@ def _prediction_episode_record(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _grounding_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    eligible = [str(value) for value in record.get("eligible_columns") or []]
-    if not eligible:
-        return None
-    return {
-        "dataset_id": str(record["dataset_id"]),
-        "eligible_columns": eligible,
-        "excluded_identifier_columns": [
-            str(value)
-            for value in record.get("excluded_identifier_columns") or []
-        ],
-        "max_cells": int(record["max_cells"]),
-    }
-
-
 def _catalog_arrow_schema(name: str) -> Any:
     try:
         import pyarrow as pa
@@ -409,6 +438,7 @@ def _catalog_arrow_schema(name: str) -> Any:
                     pa.list_(pa.string()),
                     nullable=False,
                 ),
+                pa.field("semantic_columns", pa.list_(pa.string()), nullable=False),
                 pa.field("source_adaptation_rationale", pa.string(), nullable=False),
                 pa.field("n_rows", pa.int64(), nullable=False),
                 pa.field("n_features", pa.int64(), nullable=False),
@@ -431,18 +461,6 @@ def _catalog_arrow_schema(name: str) -> Any:
                 pa.field("support_row_ids", pa.list_(pa.string()), nullable=False),
                 pa.field("query_row_ids", pa.list_(pa.string()), nullable=False),
                 pa.field("shots", pa.int64(), nullable=False),
-            ]
-        ),
-        "grounding_tasks": pa.schema(
-            [
-                pa.field("dataset_id", pa.string(), nullable=False),
-                pa.field("eligible_columns", pa.list_(pa.string()), nullable=False),
-                pa.field(
-                    "excluded_identifier_columns",
-                    pa.list_(pa.string()),
-                    nullable=False,
-                ),
-                pa.field("max_cells", pa.int64(), nullable=False),
             ]
         ),
     }
@@ -537,32 +555,41 @@ def _validate_catalog_bindings(
 
 
 def _validate_public_catalog(catalog: Catalog) -> None:
-    selected = catalog.select(
-        Selection(
-            tasks=(
-                "zero_label_serialized_table",
-                "few_shot_icl",
-                "grounding",
-            )
-        )
-    )
-    datasets = {dataset.dataset_id: dataset for dataset in selected.datasets}
+    datasets = {dataset.dataset_id: dataset for dataset in catalog.datasets}
     errors: list[str] = []
 
-    for dataset_id in sorted(selected.table_prediction_dataset_ids):
+    for dataset_id in sorted(catalog.table_prediction_dataset_ids):
         dataset = datasets[dataset_id]
         if not dataset.feature_columns:
             errors.append(f"prediction task {dataset_id!r} has no feature columns")
         if dataset.target_column in dataset.feature_columns:
             errors.append(f"prediction task {dataset_id!r} exposes its target")
 
-    for episode in selected.episodes:
+    for dataset in datasets.values():
+        if len(dataset.semantic_columns) != len(set(dataset.semantic_columns)):
+            errors.append(f"dataset {dataset.dataset_id!r} repeats semantic columns")
+        if dataset.target_column in dataset.semantic_columns:
+            errors.append(f"dataset {dataset.dataset_id!r} grounds its target")
+        if unknown := set(dataset.semantic_columns) - set(dataset.feature_columns):
+            errors.append(
+                f"dataset {dataset.dataset_id!r} has unknown semantic columns: "
+                f"{sorted(unknown)}"
+            )
+        if excluded := set(dataset.semantic_columns) & set(
+            dataset.excluded_feature_columns
+        ):
+            errors.append(
+                f"dataset {dataset.dataset_id!r} grounds excluded columns: "
+                f"{sorted(excluded)}"
+            )
+
+    for episode in catalog.episodes:
         dataset_id = str(episode["dataset_id"])
         dataset = datasets.get(dataset_id)
         if dataset is None:
             errors.append(f"episode {episode['episode_id']!r} has no dataset")
             continue
-        if dataset_id not in selected.table_prediction_dataset_ids:
+        if dataset_id not in catalog.table_prediction_dataset_ids:
             errors.append(
                 f"episode {episode['episode_id']!r} has no prediction task"
             )
@@ -582,19 +609,6 @@ def _validate_public_catalog(catalog: Catalog) -> None:
             continue
         if row_ids and (min(row_ids) < 0 or max(row_ids) >= dataset.n_rows):
             errors.append(f"episode {episode['episode_id']!r} has invalid row IDs")
-
-    for task in selected.grounding_tasks:
-        dataset_id = str(task["dataset_id"])
-        dataset = datasets[dataset_id]
-        eligible = tuple(str(value) for value in task["eligible_columns"])
-        if not eligible:
-            errors.append(f"grounding task {dataset_id!r} has no eligible columns")
-        if dataset.target_column in eligible:
-            errors.append(f"grounding task {dataset_id!r} exposes its target")
-        if unknown := set(eligible) - set(dataset.feature_columns):
-            errors.append(
-                f"grounding task {dataset_id!r} has unknown columns: {sorted(unknown)}"
-            )
 
     if errors:
         raise ValueError("invalid public catalog:\n- " + "\n- ".join(errors))

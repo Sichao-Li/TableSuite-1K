@@ -180,14 +180,11 @@ def generate_task_plans(
 
     selected = catalog.select(
         Selection(
-            tasks=("grounding",),
+            tasks=(),
             dataset_ids=dataset_ids,
             seed=config.seed,
         )
     )
-    grounding = {
-        str(record["dataset_id"]): record for record in selected.grounding_tasks
-    }
     plans: list[EvaluationPlan] = []
     task_counts: dict[str, dict[str, int]] = {
         "table_grounding": defaultdict(int),
@@ -200,12 +197,8 @@ def generate_task_plans(
     skipped: dict[str, int] = defaultdict(int)
 
     for dataset in sorted(selected.datasets, key=lambda item: item.dataset_id):
-        grounding_contract = grounding.get(dataset.dataset_id)
-        if grounding_contract is None:
-            skipped["missing_grounding_contract"] += 1
-            continue
         rows = source.rows(dataset)
-        columns = _eligible_columns(dataset, grounding_contract)
+        columns = _eligible_columns(dataset)
         if len(columns) < config.min_qa_context_columns:
             skipped["too_few_eligible_columns"] += 1
             continue
@@ -340,19 +333,8 @@ def _coprime_stride(length: int, identity: str, seed: int) -> int:
 
 def _eligible_columns(
     dataset: DatasetSpec,
-    task: dict[str, Any],
 ) -> tuple[str, ...]:
-    declared = {str(value) for value in task.get("eligible_columns", ())}
-    excluded = {
-        dataset.target_column,
-        *dataset.excluded_feature_columns,
-        *(str(value) for value in task.get("excluded_identifier_columns", ())),
-    }
-    return tuple(
-        column
-        for column in dataset.feature_columns
-        if column in declared and column not in excluded
-    )
+    return dataset.semantic_columns
 
 
 def _grounding_plans(

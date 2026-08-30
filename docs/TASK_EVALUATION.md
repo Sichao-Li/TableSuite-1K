@@ -1,9 +1,9 @@
 # Official Task Evaluation
 
-Status: **public task-record schema 2.0, released with TableSuite-1K v2.0.0**.
+Status: **public task-record schema 2.0, released with TableSuite-1K v2.1.0**.
 
-Package v2.0.1 is the minimum supported runtime for prediction requests; it
-adds explicit task-family and classification-label-space rendering.
+Package v2.1.0 is the supported runtime for percentage-controlled prediction,
+context-budget reports, and public prediction scoring.
 
 Users load ordinary Hugging Face configurations. The companion package joins
 each compact task row to `datasets`, resolves the referenced OpenML slice,
@@ -31,7 +31,7 @@ specifications = load_dataset(
     "Lester1996/TableSuite-1K",
     "table_question_answering",
     split="dataset_test",
-    revision="v2.0.0",
+    revision="v2.1.0",
 )
 print(specifications.column_names)
 print(specifications[0]["operation"])
@@ -51,7 +51,7 @@ task = load_task(
     "table_question_answering",
     split="dataset_test",
     source="openml-parquet",
-    revision="v2.0.0",
+    revision="v2.1.0",
     dataset_ids=("openml_45069",),
 )
 
@@ -113,7 +113,7 @@ task = generate_task(
     "Lester1996/TableSuite-1K",
     "table_grounding",
     source="openml-parquet",
-    revision="v2.0.0",
+    revision="v2.1.0",
     split="train",
     items_per_dataset=250,
     max_items=10_000,

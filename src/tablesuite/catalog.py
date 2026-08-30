@@ -15,7 +15,6 @@ CONFIGS = (
     "datasets",
     "table_prediction_tasks",
     "prediction_episodes",
-    "grounding_tasks",
 )
 EPISODE_PROTOCOLS = {
     "zero_shot_icl",
@@ -33,7 +32,6 @@ class CatalogSelection:
     datasets: tuple[DatasetSpec, ...]
     episodes: tuple[dict[str, Any], ...]
     table_prediction_dataset_ids: frozenset[str]
-    grounding_tasks: tuple[dict[str, Any], ...]
 
 
 class Catalog:
@@ -46,7 +44,6 @@ class Catalog:
         dataset_records: list[dict[str, Any]],
         table_prediction_records: list[dict[str, Any]],
         episode_records: list[dict[str, Any]],
-        grounding_records: list[dict[str, Any]],
     ) -> None:
         self.reference_id = reference_id
         self._datasets = tuple(DatasetSpec.from_record(row) for row in dataset_records)
@@ -54,7 +51,6 @@ class Catalog:
             str(row["dataset_id"]) for row in table_prediction_records
         }
         self._episodes = tuple(episode_records)
-        self._grounding = tuple(grounding_records)
 
     @classmethod
     def from_path(cls, root: str | Path) -> Catalog:
@@ -78,7 +74,6 @@ class Catalog:
             dataset_records=records["datasets"],
             table_prediction_records=records["table_prediction_tasks"],
             episode_records=records["prediction_episodes"],
-            grounding_records=records["grounding_tasks"],
         )
 
     @classmethod
@@ -92,8 +87,8 @@ class Catalog:
     ) -> Catalog:
         """Load reference metadata from Hugging Face Datasets.
 
-        Task execution only needs the ``datasets`` configuration. The legacy
-        prediction/grounding iterators can request all four catalog manifests.
+        Task execution only needs the ``datasets`` configuration. Prediction
+        additionally loads eligibility and frozen query-anchor configurations.
         """
 
         try:
@@ -115,7 +110,6 @@ class Catalog:
             dataset_records=records["datasets"],
             table_prediction_records=records["table_prediction_tasks"],
             episode_records=records["prediction_episodes"],
-            grounding_records=records["grounding_tasks"],
         )
 
     @property
@@ -123,6 +117,18 @@ class Catalog:
         """Return all catalogued dataset specifications."""
 
         return self._datasets
+
+    @property
+    def table_prediction_dataset_ids(self) -> frozenset[str]:
+        """Return dataset IDs covered by the prediction benchmark."""
+
+        return frozenset(self._table_prediction_ids)
+
+    @property
+    def episodes(self) -> tuple[dict[str, Any], ...]:
+        """Return frozen prediction episode anchors."""
+
+        return self._episodes
 
     def summary(self) -> dict[str, Any]:
         """Return compact reference counts for display and smoke tests."""
@@ -137,7 +143,6 @@ class Catalog:
             "datasets": len(self._datasets),
             "table_prediction_tasks": len(self._table_prediction_ids),
             "prediction_episode_candidates": len(self._episodes),
-            "grounding_tasks": len(self._grounding),
             "task_families": dict(sorted(families.items())),
             "dataset_splits": dict(sorted(splits.items())),
         }
@@ -197,15 +202,6 @@ class Catalog:
                 )
                 episodes.extend(selected_episodes)
 
-        grounding = (
-            tuple(
-                row
-                for row in self._grounding
-                if str(row["dataset_id"]) in selected_ids
-            )
-            if "grounding" in selection.tasks
-            else ()
-        )
         manifest = SelectionManifest(
             schema_version="1.2",
             reference_id=self.reference_id,
@@ -220,7 +216,6 @@ class Catalog:
             table_prediction_dataset_ids=frozenset(
                 selected_ids & self._table_prediction_ids
             ),
-            grounding_tasks=grounding,
         )
 
 

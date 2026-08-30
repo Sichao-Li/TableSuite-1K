@@ -10,8 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from tablesuite import Benchmark, TableSlice, load_task
+from tablesuite import TableSlice, load_task
 from tablesuite._cli import main as cli_main
+from tablesuite.benchmark import Benchmark
 from tablesuite.evaluation import (
     BENCHMARK_VERSION,
     PLAN_SCHEMA_VERSION,

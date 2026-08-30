@@ -9,16 +9,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import get_dataset_config_names, load_dataset
 
-from tablesuite import (
-    Benchmark,
-    Catalog,
-    GeneratedTaskDataset,
-    generate_task,
-    load_generated_task,
-    load_task,
-)
+from tablesuite import GeneratedTaskDataset, generate_task, load_generated_task, load_task
 from tablesuite._cli import main as cli_main
 from tablesuite.authoring import _evaluation_pools, _grounding_slots, _qa_slots
+from tablesuite.benchmark import Benchmark
+from tablesuite.catalog import Catalog
 from tablesuite.evaluation import PlanExecutor, audit_plans
 from tablesuite.release import TaskGenerationConfig, build_huggingface_release
 from tablesuite.task_records import read_task_records, task_registry
@@ -165,11 +160,10 @@ def test_release_builder_is_deterministic_value_free_and_executable(
     assert not (first / "release_summary.md").exists()
     assert first_summary["catalog_counts"] == {
         "datasets": 4,
-        "grounding_tasks": 3,
         "prediction_episodes": 3,
         "table_prediction_tasks": 3,
     }
-    assert first_summary["release_version"] == "2.0.1"
+    assert first_summary["release_version"] == "2.1.0"
     reference_summary = json.loads(
         (first / "reference_summary.json").read_text(encoding="utf-8")
     )
@@ -182,16 +176,15 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "schema_version",
         "source_provider",
     }
-    assert reference_summary["release_version"] == "2.0.1"
+    assert reference_summary["release_version"] == "2.1.0"
     assert reference_summary["record_schemas"] == {
-        "catalog": "1.0",
+        "catalog": "1.1",
         "official_tasks": "2.0",
     }
     assert set(get_dataset_config_names(str(first))) == {
         "datasets",
         "table_prediction_tasks",
         "prediction_episodes",
-        "grounding_tasks",
         "table_grounding",
         "table_question_answering",
     }
@@ -230,18 +223,6 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         for split in prediction_episode_splits.values()
         for row in split
     } == {"openml_101", "openml_102", "openml_103"}
-    grounding_splits = load_dataset(
-        str(first),
-        "grounding_tasks",
-        cache_dir=str(tmp_path / "hf-cache-grounding"),
-    )
-    assert sum(len(split) for split in grounding_splits.values()) == 3
-    assert grounding_splits["train"].column_names == [
-        "dataset_id",
-        "eligible_columns",
-        "excluded_identifier_columns",
-        "max_cells",
-    ]
     dataset_splits = load_dataset(
         str(first),
         "datasets",
@@ -260,6 +241,7 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "feature_columns",
         "target_transform",
         "excluded_feature_columns",
+        "semantic_columns",
         "source_adaptation_rationale",
         "n_rows",
         "n_features",
@@ -267,6 +249,19 @@ def test_release_builder_is_deterministic_value_free_and_executable(
         "dedup_cluster_id",
         "openml_license_claim",
     ]
+    catalog_by_id = {
+        row["dataset_id"]: row
+        for split in dataset_splits.values()
+        for row in split
+    }
+    assert catalog_by_id["openml_101"]["semantic_columns"] == [
+        "Age",
+        "Income",
+        "Group",
+        "City",
+    ]
+    assert "Identifier" not in catalog_by_id["openml_101"]["semantic_columns"]
+    assert catalog_by_id["openml_104"]["semantic_columns"] == []
     hub_rows = load_dataset(
         str(first),
         "table_grounding",
@@ -437,7 +432,6 @@ def test_release_builder_accepts_an_existing_public_release(
         "datasets",
         "table_prediction_tasks",
         "prediction_episodes",
-        "grounding_tasks",
         "table_grounding",
         "table_question_answering",
     }
@@ -648,17 +642,11 @@ def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:
     grounding = [
         {
             **dataset,
-            "task_id": f"{dataset['dataset_id']}:cell_fact_equivalence",
             "eligible_columns": (
                 ["Age", "Income", "Group", "City"]
                 if dataset["feature_columns"]
                 else []
             ),
-            "excluded_identifier_columns": [],
-            "sampler": "column_balanced_v1",
-            "sampler_seed": 0,
-            "max_cells": 1000,
-            "text_views": ["key_value", "json", "markdown", "natural_language"],
         }
         for dataset in datasets
     ]
@@ -688,6 +676,7 @@ def _authoring_fixture(tmp_path: Path) -> tuple[Path, Path]:
         pq.write_table(
             pa.table(
                 {
+                    "Identifier": [f"id-{index}" for index in range(count)],
                     "Age": [18 + index for index in range(count)],
                     "Income": [1000 + 13 * index for index in range(count)],
                     "Group": ["a" if index % 3 else "b" for index in range(count)],
@@ -717,12 +706,12 @@ def _dataset_record(
         "source_url": f"https://www.openml.org/d/{source_id}",
         "task_type": "binary_classification",
         "target_column": "Target",
-        "feature_columns": ["Age", "Income", "Group", "City"],
+        "feature_columns": ["Identifier", "Age", "Income", "Group", "City"],
         "target_transform": "none",
         "excluded_feature_columns": [],
         "dataset_name": dataset_id,
         "n_rows": rows,
-        "n_features": 4,
+        "n_features": 5,
         "n_classes": 2,
         "dedup_cluster_id": cluster,
         "metadata_tier": "structural",

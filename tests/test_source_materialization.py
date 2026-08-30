@@ -7,7 +7,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from tablesuite import Catalog, materialize_openml_sources
+from tablesuite import materialize_openml_sources
+from tablesuite.catalog import Catalog
 
 
 def test_openml_materialization_is_bounded_and_records_source_notices(

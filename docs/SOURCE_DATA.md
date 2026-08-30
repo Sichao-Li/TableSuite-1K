@@ -4,7 +4,7 @@
 
 The public Hugging Face repository is a benchmark-definition package. It
 contains OpenML identities, schemas, targets, fixed partitions, episode row
-references, and grounding sampler contracts. It does not contain source table
+references, and value-free semantic task plans. It does not contain source table
 values, labels, rendered facts, predictions, embeddings, or model weights.
 
 OpenML remains the source-data distributor. A user who materializes a table is
@@ -44,7 +44,7 @@ review.
 
 Before publishing a reference revision:
 
-1. load all six Hugging Face configurations in a fresh cache;
+1. load all five Hugging Face configurations in a fresh cache;
 2. verify that no source-value or model-artifact fields are present;
 3. report counts by task family and dataset split;
 4. confirm that the release contains exactly the intended OpenML IDs;

@@ -89,16 +89,6 @@ def benchmark_fixture(tmp_path: Path) -> tuple[Path, Path]:
             "query_size": 2,
         },
     ]
-    grounding = {
-        **dataset,
-        "task_id": "openml_1:cell_fact_equivalence",
-        "eligible_columns": ["Age", "Income"],
-        "excluded_identifier_columns": [],
-        "sampler": "column_balanced_v1",
-        "sampler_seed": 0,
-        "max_cells": 4,
-        "text_views": ["key_value", "json", "markdown", "natural_language"],
-    }
     _write_config(reference, "datasets", [dataset, second_dataset])
     _write_config(
         reference,
@@ -106,7 +96,6 @@ def benchmark_fixture(tmp_path: Path) -> tuple[Path, Path]:
         [table_prediction, second_table_prediction],
     )
     _write_config(reference, "prediction_episodes", episodes)
-    _write_config(reference, "grounding_tasks", [grounding])
     (reference / "reference_summary.json").write_text(
         json.dumps({"schema_version": "1.0", "datasets": 2, "episodes": 2}),
         encoding="utf-8",
