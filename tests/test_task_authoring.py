@@ -427,6 +427,9 @@ def test_release_builder_accepts_an_existing_public_release(
     )
 
     assert summary["passed"]
+    first_ids = _release_item_ids(first)
+    assert _release_item_ids(rebuilt) == first_ids
+    assert summary["preserved_item_ids"] == len(first_ids)
     assert Catalog.from_path(rebuilt).summary()["datasets"] == 4
     assert set(get_dataset_config_names(str(rebuilt))) == {
         "datasets",
@@ -727,3 +730,11 @@ def _write_config(root: Path, config: str, rows: list[dict[str, object]]) -> Non
         destination = root / config / split
         destination.mkdir(parents=True, exist_ok=True)
         pq.write_table(pa.Table.from_pylist(split_rows), destination / "part-00000.parquet")
+
+
+def _release_item_ids(root: Path) -> list[str]:
+    return sorted(
+        str(record["item_id"])
+        for task in ("table_grounding", "table_question_answering")
+        for record in read_task_records(root / "tasks" / task)
+    )

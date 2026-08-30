@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -88,18 +89,23 @@ def build_huggingface_release(
 
         source = ParquetSource(source_path)
         generated = generate_task_plans(public_catalog, source, policy)
-        audit = audit_plans(generated.plans)
+        plans, preserved_item_ids = _preserve_reference_item_ids(
+            reference_path,
+            public_catalog,
+            generated.plans,
+        )
+        audit = audit_plans(plans)
         audit.require_passed()
-        _validate_catalog_bindings(public_catalog, generated.plans)
+        _validate_catalog_bindings(public_catalog, plans)
         _require_release_coverage(generated.task_counts)
-        _validate_value_free(generated.plans)
-        task_matrix = _task_matrix(generated.plans)
+        _validate_value_free(plans)
+        task_matrix = _task_matrix(plans)
         _validate_task_matrix(task_matrix)
-        executed = _validate_execution(public_catalog, source, generated.plans)
+        executed = _validate_execution(public_catalog, source, plans)
 
-        _write_task_configs(staging, generated.plans, policy.shard_size)
+        _write_task_configs(staging, plans, policy.shard_size)
         public_plans = _load_release_plans(staging, public_catalog)
-        _validate_task_roundtrip(generated.plans, public_plans)
+        _validate_task_roundtrip(plans, public_plans)
         public_audit = audit_plans(public_plans)
         public_audit.require_passed()
         _validate_catalog_bindings(public_catalog, public_plans)
@@ -115,6 +121,7 @@ def build_huggingface_release(
             "rendered_questions_stored": False,
             "gold_answers_stored": False,
             "task_plans_executed": executed,
+            "preserved_item_ids": preserved_item_ids,
             "task_counts": generated.task_counts,
             "task_matrix": task_matrix,
             "dataset_counts": generated.dataset_counts,
@@ -502,6 +509,55 @@ def _write_task_configs(
                 destination / f"part-{shard_index:05d}.parquet",
                 compression="zstd",
             )
+
+
+def _preserve_reference_item_ids(
+    reference: Path,
+    catalog: Catalog,
+    plans: tuple[EvaluationPlan, ...],
+) -> tuple[tuple[EvaluationPlan, ...], int]:
+    """Reuse stable IDs for task plans unchanged from the input release."""
+
+    task_roots = tuple(reference / "tasks" / task for task in TASK_CONFIGS)
+    present = tuple(root.is_dir() for root in task_roots)
+    if not any(present):
+        return plans, 0
+    if not all(present):
+        raise ValueError("reference package contains an incomplete official task set")
+
+    reference_plans = _load_release_plans(reference, catalog)
+    reference_ids: dict[str, str] = {}
+    for plan in reference_plans:
+        identity = _public_plan_identity(plan)
+        if identity in reference_ids:
+            raise ValueError("reference package contains duplicate semantic task plans")
+        reference_ids[identity] = plan.item_id
+
+    rebound: list[EvaluationPlan] = []
+    preserved = 0
+    seen_ids: set[str] = set()
+    for plan in plans:
+        item_id = reference_ids.get(_public_plan_identity(plan))
+        if item_id is not None:
+            plan = replace(plan, item_id=item_id)
+            preserved += 1
+        if plan.item_id in seen_ids:
+            raise ValueError(f"task ID collision while preserving {plan.item_id!r}")
+        seen_ids.add(plan.item_id)
+        rebound.append(plan)
+    return tuple(sorted(rebound, key=lambda plan: plan.item_id)), preserved
+
+
+def _public_plan_identity(plan: EvaluationPlan) -> str:
+    record = public_task_record(plan)
+    del record["item_id"]
+    return json.dumps(
+        record,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _validate_execution(
